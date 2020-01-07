@@ -21,6 +21,8 @@ manifest:
   remotes:
     - name: upstream
       url-base: https://github.com/zephyrproject-rtos
+    - name: rpmsg-lite-fork
+      url-base: https://github.com/nika-nordic
 
   #
   # Please add items below based on alphabetical order
@@ -103,6 +105,10 @@ manifest:
     - name: mipi-sys-t
       path: modules/debug/mipi-sys-t
       revision: baf51863f19f009b92e762115ba5572a5b996b92
+    - name: rpmsg-lite
+      path: modules/lib/rpmsg-lite
+      remote: rpmsg-lite-fork
+      revision: 5baf5bd3712212e6b8e49cfcfbd8f3d1d533d73a
 
   self:
     path: zephyr
