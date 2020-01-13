@@ -1,0 +1,18 @@
+config RPMSGLITE
+	bool "RPMsg-Lite Support"
+	help
+	  This option enables the RPMsg-Lite IPC library
+
+config RPMSGLITE_FORCE_REMOTE_LINK_UP
+	bool "Force link up after remote init"
+	depends on RPMSGLITE
+	default y
+	help
+	  This option forces the link to be considered as established after remote init
+
+config RPMSGLITE_USE_STATIC_API
+	bool "Disable dynamic memory allocation"
+	depends on RPMSGLITE
+	default n
+	help
+	  This option disables dynamic memory allocation
