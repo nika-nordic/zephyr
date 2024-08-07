@@ -1,0 +1,7 @@
+/ {
+    test0: test@40002000 {
+        compatible = "nordic,nrf-test1", "nordic,nrf-test0";
+        reg = <0x40002000 0x1000>;
+        test1-required-prop = <1>;
+    };
+};

@@ -1,0 +1,12 @@
+description: Nordic Test 1 device
+
+compatible: "nordic,nrf-test1"
+
+properties:
+  test1-required-prop:
+    type: int
+    required: true
+    description: |
+      Required property.
+
+include: nordic,nrf-test0.yaml

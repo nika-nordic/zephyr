@@ -1,0 +1,9 @@
+description: Nordic Test 0 (baseline) device
+
+compatible: "nordic,nrf-test0"
+
+include: base.yaml
+
+properties:
+  reg:
+    required: true
