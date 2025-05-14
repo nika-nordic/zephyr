@@ -7,6 +7,7 @@
 #define ADC_CONTEXT_USES_KERNEL_TIMER
 #include "adc_context.h"
 #include <nrfx_saadc.h>
+#include <zephyr/drivers/adc/adc_nrf.h>
 #include <zephyr/dt-bindings/adc/nrf-adc.h>
 #include <zephyr/dt-bindings/adc/nrf-saadc-v3.h>
 #include <zephyr/dt-bindings/adc/nrf-saadc-nrf54l.h>
@@ -712,6 +713,46 @@ static int init_saadc(const struct device *dev)
 	adc_context_unlock_unconditionally(&m_data.ctx);
 
 	return pm_device_driver_init(dev, saadc_pm_hook);
+}
+
+int adc_nrf_provide_buffer(const struct device *dev, void * buffer, size_t sample_cnt)
+{
+	nrfx_err_t nrfx_err;
+
+	nrfx_err = nrfx_saadc_buffer_set(buffer, sample_cnt);
+	if (nrfx_err != NRFX_SUCCESS) {
+		LOG_INF("buffer_set: 0x%x", nrfx_err);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+int adc_nrf_read_start(const struct device *dev, uint32_t channels,
+                       const adc_nrf_read_config_t * config, adc_nrf_event_handler_t handler)
+{
+	nrfx_err_t nrfx_err;
+
+	nrfx_err = nrfx_saadc_advanced_mode_set(channels,
+						NRF_SAADC_RESOLUTION_10BIT,
+						config,
+						handler);
+	if (nrfx_err != NRFX_SUCCESS) {
+		LOG_INF("advanced_mode_set: 0x%x", nrfx_err);
+		return -EINVAL;
+	}
+
+	nrfx_saadc_evt_t evt;
+	evt.type = NRFX_SAADC_EVT_BUF_REQ;
+	handler(&evt);
+
+	nrfx_err = nrfx_saadc_mode_trigger();
+	if (nrfx_err != NRFX_SUCCESS) {
+		LOG_INF("mode_trigger: 0x%x", nrfx_err);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static DEVICE_API(adc, adc_nrfx_driver_api) = {
