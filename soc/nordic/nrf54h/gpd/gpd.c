@@ -26,6 +26,13 @@ BUILD_ASSERT(GDPWR_GD_FAST_MAIN == NRF_GPD_FAST_MAIN);
 BUILD_ASSERT(GDPWR_GD_SLOW_ACTIVE == NRF_GPD_SLOW_ACTIVE);
 BUILD_ASSERT(GDPWR_GD_SLOW_MAIN == NRF_GPD_SLOW_MAIN);
 
+#define NRF_GPD_ID_TO_NAME(_id) \
+	(_id == NRF_GPD_FAST_ACTIVE0 ? "NRF_GPD_FAST_ACTIVE0" : \
+	(_id == NRF_GPD_FAST_ACTIVE1 ? "NRF_GPD_FAST_ACTIVE1" : \
+	(_id == NRF_GPD_FAST_MAIN ? "NRF_GPD_FAST_MAIN" : \
+	(_id == NRF_GPD_SLOW_ACTIVE ? "NRF_GPD_SLOW_ACTIVE" : \
+	(_id == NRF_GPD_SLOW_MAIN ? "NRF_GPD_SLOW_MAIN" : "UNKNOWN")))))
+
 struct gpd_onoff_manager {
 	struct onoff_manager mgr;
 	onoff_notify_fn notify;
@@ -137,6 +144,7 @@ static int nrf_gpd_sync(struct gpd_onoff_manager *gpd_mgr)
 		}
 
 		if (atomic_test_bit(&gpd_service_status, GPD_SERVICE_REQ_OK)) {
+			printk("gpd_sync_request=%s->%s\n", NRF_GPD_ID_TO_NAME(gpd_mgr->id), gpd_mgr->mgr.refs == 0 ? "DIS" : "EN");
 			return 0;
 		}
 
@@ -252,6 +260,8 @@ int nrf_gpd_request(uint8_t id)
 		k_mutex_unlock(&gpd_mgr->lock);
 	}
 
+	printk("gpd_request=%s\n", NRF_GPD_ID_TO_NAME(id));
+
 	return ret;
 }
 
@@ -269,7 +279,11 @@ int nrf_gpd_release(uint8_t id)
 		return -EIO;
 	}
 
-	return onoff_release(&gpd_mgr->mgr);
+	int status = onoff_release(&gpd_mgr->mgr);
+
+	printk("gpd_release=%s\n", NRF_GPD_ID_TO_NAME(id));
+
+	return status;
 }
 
 int nrf_gpd_retain_pins_set(const struct pinctrl_dev_config *pcfg, bool retain)
