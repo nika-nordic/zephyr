@@ -25,6 +25,7 @@ zephyr_library_sources(
   argparse.c
   nsi_if.c
   native_remap.c
+  gpiote_nrfx_native.c
   soc/nrfx_coredep.c
   common/bstests_entry.c
   common/cmsis/cmsis.c
