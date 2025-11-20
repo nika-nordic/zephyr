@@ -584,7 +584,8 @@ static void nrfx_gpio_handler(nrfx_gpiote_pin_t abs_pin,
 /* Wrap nrfx IRQ handler to make native builds happy, as providing nrfx IRQ handler
  * directly in IRQ_CONNECT causes complaints about mismatched types.
  * Casting brings similar effect, however clashes with IRQ_CONNECT macro implementation
- * for non-native builds. */
+ * for non-native builds.
+ */
 void gpio_nrfx_gpiote_irq_handler(void const *param)
 {
 	nrfx_gpiote_t *gpiote = (nrfx_gpiote_t *)param;
