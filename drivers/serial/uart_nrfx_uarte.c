@@ -963,7 +963,7 @@ static int uarte_nrfx_rx_counting_init(const struct device *dev)
 		ret = nrfx_timer_init(&data->timer,
 				      &tmr_config,
 				      timer_handler);
-		if (ret != NRFX_SUCCESS) {
+		if (ret != 0) {
 			LOG_ERR("Timer already initialized");
 			return -EINVAL;
 		}
