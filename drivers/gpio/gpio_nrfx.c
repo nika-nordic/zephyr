@@ -580,10 +580,23 @@ static void nrfx_gpio_handler(nrfx_gpiote_pin_t abs_pin,
 }
 #endif /* CONFIG_GPIO_NRFX_INTERRUPT */
 
+#ifdef CONFIG_GPIO_NRFX_INTERRUPT
+/* Wrap nrfx IRQ handler to make native builds happy, as providing nrfx IRQ handler
+ * directly in IRQ_CONNECT causes complaints about mismatched types.
+ * Casting brings similar effect, however clashes with IRQ_CONNECT macro implementation
+ * for non-native builds. */
+void gpio_nrfx_gpiote_irq_handler(void const *param)
+{
+	nrfx_gpiote_t *gpiote = (nrfx_gpiote_t *)param;
+
+	nrfx_gpiote_irq_handler(gpiote);
+}
+#endif
+
 #define GPIOTE_IRQ_HANDLER_CONNECT(node_id)		\
 	IRQ_CONNECT(DT_IRQN(node_id),			\
 		    DT_IRQ(node_id, priority),		\
-		    (void *)nrfx_gpiote_irq_handler,    \
+		    gpio_nrfx_gpiote_irq_handler,       \
 		    &GPIOTE_NRFX_INST_BY_NODE(node_id), \
 		    0);
 
