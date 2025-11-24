@@ -244,7 +244,7 @@ static bool switch_to_uarte(void)
 	}
 
 	ret = nrfx_uarte_init(&uarte, &uarte_config, uarte_handler);
-	if (err != 0) {
+	if (ret != 0) {
 		printk("nrfx_uarte_init() failed: %d\n", ret);
 		return false;
 	}
