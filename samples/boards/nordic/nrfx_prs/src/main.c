@@ -34,6 +34,7 @@ static bool spim_initialized;
 static bool uarte_initialized;
 static volatile size_t received;
 static K_SEM_DEFINE(transfer_finished, 0, 1);
+void nrfx_prs_box_2_irq_handler(void);
 
 static enum {
 	PERFORM_TRANSFER,
@@ -111,7 +112,7 @@ static bool init_buttons(void)
 	return true;
 }
 
-static void spim_handler(const nrfx_spim_evt_t *p_event, void *p_context)
+static void spim_handler(const nrfx_spim_event_t *p_event, void *p_context)
 {
 	if (p_event->type == NRFX_SPIM_EVENT_DONE) {
 		k_sem_give(&transfer_finished);
