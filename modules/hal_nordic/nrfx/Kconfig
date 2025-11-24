@@ -55,6 +55,10 @@ config NRFX_COMP
 config NRFX_CRACEN
 	bool "CRACEN drivers"
 	depends on SOC_COMPATIBLE_NRF54LX
+	select NRFX_CRACEN_BSIM_SUPPORT if SOC_SERIES_BSIM_NRFXX
+
+config NRFX_CRACEN_BSIM_SUPPORT
+	bool
 
 config NRFX_EGU
 	bool
