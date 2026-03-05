@@ -278,6 +278,27 @@
 			     (DT_PROP_LAST(DT_CLOCKS_CTLR(node), supported_clock_frequency)))),	\
 		(NRFX_MHZ_TO_HZ(16)))
 
+#define CLK_PRESENT(client) DT_NODE_HAS_PROP(client, clocks)
+
+#define CLK_SIG(client) DT_PHANDLE(client, clocks)
+
+#define CLK_SRC_FRQ(client) \
+	COND_CODE_1(DT_NODE_HAS_COMPAT(CLK_SIG(client), nordic_variable_clock), \
+		    (DT_PHA_BY_IDX(client, clocks, 0, frequency)), /* explicit freq defined at client */ \
+		    (DT_PROP(CLK_SIG(client), clock_frequency))) /* static freq from clock signal */
+
+#define CLK_REQ_FRQ(client) \
+	COND_CODE_1(DT_PHA_HAS_CELL_AT_IDX(client, clocks, 0, frequency), \
+		    (DT_PHA_BY_IDX(client, clocks, 0, frequency)), \
+		    (0))
+
+#define CLK_ACC(client) DT_PHA_BY_IDX(client, clocks, 0, quality)
+
+#define CLK_DEV(client) COND_CODE_1(DT_NODE_HAS_COMPAT(CLK_SIG(client), nordic_clock_signal), \
+				    (DEVICE_DT_GET(CLK_SIG(CLK_SIG(client)))), /* assume parent is actual device we look for */ \
+				    (DEVICE_DT_GET(CLK_SIG(client))))
+
+
 /**
  * @brief Utility macro to check if instance is fast by node, expands to 1 or 0.
  *

@@ -1,0 +1,9 @@
+&uart1 {
+    status = "okay";
+    clocks = <&pclk16m NRF_DT_CLK_XTAL>;
+    current-speed = <9600>;
+};
+
+&hfclk {
+    status = "okay";
+};

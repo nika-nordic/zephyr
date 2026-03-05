@@ -33,6 +33,34 @@
 		};
 	};
 
+	clocks {
+		/* CASE_1: clock signal with frequency determined by parent clock device, not alterable by clock sink. */
+		/* `base` meaning user should look for parent clock for actual frequency. */
+		aclk: aclk {
+			compatible = "base";
+			#clock-cells = <0>; /* <{clock source device}> */
+			clocks = <&hfclkaudio>;
+		};
+
+		/* CASE_2: clock signal with static frequency.
+		 * There might be more such signals with different frequency, governed by same parent. */
+		pclk16m: pclk16m {
+			compatible = "nordic,fixed-clock", "nordic,clock-signal";
+			#clock-cells = <1>; /* <{clock source device} {clock quality}> */
+			clock-frequency = <DT_FREQ_M(16)>;
+			clocks = <&hfclk>;
+		};
+
+		/* CASE_3: clock signal with variable frequency, alterable by clock sink. */
+		/* Not really a variable clock - this is just for showcasing */
+		pclk32m: pclk32m {
+			compatible = "nordic,variable-clock", "nordic,clock-signal";
+			#clock-cells = <2>; /* <{clock source device} {clock quality} {clock frequency}> */
+			clock-frequency = <DT_FREQ_M(32)>;
+			clocks = <&hfclk>;
+		};
+	};
+
 	chosen {
 		zephyr,entropy = &cryptocell;
 		zephyr,flash-controller = &flash_controller;

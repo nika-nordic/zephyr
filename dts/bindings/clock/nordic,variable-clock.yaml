@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+description: Nordic variable-rate clock provider
+
+compatible: "nordic,variable-clock"
+
+include: [base.yaml, clock-controller.yaml]
+
+properties:
+  clock-frequency:
+    type: int
+    description: output clock frequency (Hz)
+    required: true
+
+clock-cells:
+  - quality
+  - frequency

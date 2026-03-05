@@ -1,0 +1,8 @@
+# Copyright (c) 2026 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+description: Nordic clock signal
+
+compatible: "nordic,clock-signal"
+
+include: [base.yaml, clock-controller.yaml]

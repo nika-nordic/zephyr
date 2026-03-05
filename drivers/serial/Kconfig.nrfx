@@ -93,6 +93,35 @@ config UART_NRFX_UARTE_DIRECT_ISR
 	bool "Use direct ISR"
 	default y if !MULTITHREADING
 
+choice UART_NRFX_UARTE_CLOCK_MGMT
+	prompt "Clock management scheme"
+	default UART_NRFX_UARTE_CLOCK_MGMT_ON_PM if PM_DEVICE_RUNTIME
+	default UART_NRFX_UARTE_CLOCK_MGMT_ON_ACT
+	help
+	  Determines how the clock source specified in `clocks` property
+	  is managed by the driver.
+
+config UART_NRFX_UARTE_CLOCK_MGMT_ON_ACT
+	bool "Manage clock on peripheral activity"
+	help
+	  The clock source specified in `clocks` property is requested before each operation
+	  and released after each operation.
+
+config UART_NRFX_UARTE_CLOCK_MGMT_ON_PM
+	bool "Manage clock on peripheral activity"
+	depends on PM_DEVICE_RUNTIME
+	help
+	  The clock source specified in `clocks` property is requested before resuming the driver
+	  and released after suspending the driver.
+
+config UART_NRFX_UARTE_CLOCK_MGMT_ON_INIT
+	bool "Manage clock on peripheral initialization"
+	help
+	  The clock source specified in `clocks` property is requested before
+	  peripheral initialization and released after peripheral uninitialization.
+
+endchoice
+
 if HAS_HW_NRF_UART0 || HAS_HW_NRF_UARTE0
 nrfx_uart_num = 0
 rsource "Kconfig.nrfx_uart_instance"

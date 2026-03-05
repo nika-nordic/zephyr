@@ -10,6 +10,7 @@
 
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/pinctrl.h>
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/pm/device_runtime.h>
 #include <hal/nrf_uarte.h>
@@ -20,6 +21,7 @@
 #include <soc.h>
 #include <dmm.h>
 #include <helpers/nrfx_gppi.h>
+#include <zephyr/dt-bindings/clock/nrf_clocks.h>
 #include <zephyr/linker/devicetree_regions.h>
 #include <zephyr/irq.h>
 #include <zephyr/logging/log.h>
@@ -43,6 +45,28 @@ LOG_MODULE_REGISTER(uart_nrfx_uarte, CONFIG_UART_LOG_LEVEL);
 /* Execute macro f(x) for all instances. */
 #define UARTE_FOR_EACH_INSTANCE(f, sep, off_code, ...)                                             \
 	NRFX_FOREACH_PRESENT(UARTE, f, sep, off_code, __VA_ARGS__)
+
+/* Execute macro f(x) for all enabled instances. */
+#define UARTE_FOR_EACH_ENABLED_INSTANCE(f, sep, ...) \
+	DT_FOREACH_STATUS_OKAY_VARGS(nordic_nrf_uarte, f, __VA_ARGS__)
+
+/* Determine if any instance is using non-default clock source quality specifier. */
+#define IS_CLK_QUALITY(unused, prefix, i, _) \
+	(COND_CODE_1(DT_NODE_HAS_STATUS_OKAY(UARTE(i)), \
+		     (CLK_ACC(UARTE(i)) != NRF_DT_CLK_DEFAULT), (0)))
+
+#if UARTE_FOR_EACH_INSTANCE(IS_CLK_QUALITY, (||), (0))
+	#define UARTE_ANY_CLK_QUALITY 1
+#endif
+
+/* Determine if any instance is using clock source frequency specifier. */
+#define IS_CLK_FREQ(unused, prefix, i, _) \
+	(COND_CODE_1(DT_NODE_HAS_STATUS_OKAY(UARTE(i)), \
+		     (DT_PHA_HAS_CELL_AT_IDX(UARTE(i), clocks, 0, frequency)), (0)))
+
+#if UARTE_FOR_EACH_INSTANCE(IS_CLK_FREQ, (||), (0))
+	#define UARTE_ANY_CLK_FREQ 1
+#endif
 
 /* Determine if any instance is using interrupt driven API. */
 #define IS_INT_DRIVEN(unused, prefix, i, _) \
@@ -126,7 +150,7 @@ LOG_MODULE_REGISTER(uart_nrfx_uarte, CONFIG_UART_LOG_LEVEL);
 
 #define INSTANCE_IS_HIGH_SPEED(unused, prefix, idx, _) \
 	COND_CODE_1(DT_NODE_HAS_STATUS_OKAY(UARTE(prefix##idx)),				\
-	    ((NRF_PERIPH_GET_FREQUENCY(UARTE(prefix##idx)) > NRF_UARTE_BASE_FREQUENCY_16MHZ)),	\
+	    ((CLK_SRC_FRQ(UARTE(prefix##idx)) > NRF_UARTE_BASE_FREQUENCY_16MHZ)),		\
 	    (0))
 
 /* Macro determines if there is any high speed instance (instance that is driven using
@@ -387,6 +411,13 @@ struct uarte_nrfx_config {
 #endif /* UARTE_ANY_ASYNC */
 	uint8_t *poll_out_byte;
 	uint8_t *poll_in_byte;
+#ifdef UARTE_ANY_CLK_QUALITY
+	const struct device * clk_dev;
+	int16_t clk_acc;
+#ifdef UARTE_ANY_CLK_FREQ
+	uint32_t clk_frq;
+#endif
+#endif
 };
 
 /* Determine if instance is using an approach with counting bytes with TIMER (legacy). */
@@ -1695,6 +1726,62 @@ static bool has_hwfc(const struct device *dev)
 #endif
 }
 
+static void uarte_clk_request(const struct device *dev)
+{
+	__maybe_unused const struct uarte_nrfx_config *config = dev->config;
+
+#ifdef UARTE_ANY_CLK_QUALITY
+	if (config->clk_acc != NRF_DT_CLK_DEFAULT) {
+		struct nrf_clock_spec spec;
+#ifdef UARTE_ANY_CLK_FREQ
+		if (config->clk_frq) {
+			spec.frequency = config->clk_frq;
+		} else
+#endif
+		{
+			spec.frequency = 0;
+		}
+		spec.accuracy = config->clk_acc;
+
+		/* todo: how to handle calling from ISR context?
+		 * 1. like for UARTE120, suggest PM_DEVICE_RUNTIME, UART_NRFX_UARTE_CLOCK_MGMT_ON_PM
+		 *    and pm_device_runtime_get in application context.
+		 * 2. rework driver logic to continue UARTE-specific code execution only when callback
+		 *    from `nrf_clock_control_request` is invoked (i.e. driver is notified of started clock)
+		 */
+		int err = nrf_clock_control_request_sync(config->clk_dev, &spec, K_FOREVER);
+		if (err < 0) {
+			/* todo: error handling */
+		}
+	}
+#endif
+}
+
+static void uarte_clk_release(const struct device *dev)
+{
+	__maybe_unused const struct uarte_nrfx_config *config = dev->config;
+
+#ifdef UARTE_ANY_CLK_QUALITY
+	if (config->clk_acc != NRF_DT_CLK_DEFAULT) {
+		struct nrf_clock_spec spec;
+#ifdef UARTE_ANY_CLK_FREQ
+		if (config->clk_frq) {
+			spec.frequency = config->clk_frq;
+		} else
+#endif
+		{
+			spec.frequency = 0;
+		}
+		spec.accuracy = config->clk_acc;
+
+		int err = nrf_clock_control_release(config->clk_dev, &spec);
+		if (err < 0) {
+			/* todo: error handling */
+		}
+	}
+#endif
+}
+
 static int uarte_nrfx_tx(const struct device *dev, const uint8_t *buf,
 			 size_t len,
 			 int32_t timeout)
@@ -1722,6 +1809,10 @@ static int uarte_nrfx_tx(const struct device *dev, const uint8_t *buf,
 
 	if (IS_ENABLED(CONFIG_PM_DEVICE_RUNTIME)) {
 		pm_device_runtime_get(dev);
+	}
+
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_ACT)) {
+		uarte_clk_request(dev);
 	}
 
 	start_tx_locked(dev, data);
@@ -2420,6 +2511,10 @@ static void txstopped_isr(const struct device *dev)
 	if (IS_ENABLED(CONFIG_PM_DEVICE_RUNTIME)) {
 		pm_device_runtime_put_async(dev, K_NO_WAIT);
 	}
+
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_ACT)) {
+		uarte_clk_release(dev);
+	}
 }
 
 static void rxdrdy_isr(const struct device *dev)
@@ -2628,6 +2723,14 @@ static void uarte_nrfx_poll_out(const struct device *dev, unsigned char c)
 			pm_device_runtime_get(dev);
 		}
 	}
+
+	/* todo: how to handle driver functions invoked from ISR context?
+	 * clock source starting is lengthy operation.
+	 */
+
+	/* todo: pm_device_runtime_put/get has reference counting
+	 * facilitating requesting resources prior to driver call.
+	 * Do we have the same features using onoff manager ? */
 
 	*config->poll_out_byte = c;
 	tx_start(dev, config->poll_out_byte, 1);
@@ -2955,6 +3058,11 @@ static void uarte_pm_resume(const struct device *dev)
 {
 	const struct uarte_nrfx_config *cfg = dev->config;
 
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_PM) ||
+	    IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_INIT)) {
+		uarte_clk_request(dev);
+	}
+
 	if (IS_ENABLED(CONFIG_PM_DEVICE_RUNTIME) || !LOW_POWER_ENABLED(cfg)) {
 		uarte_periph_enable(dev);
 	}
@@ -3026,6 +3134,8 @@ static void uarte_pm_suspend(const struct device *dev)
 
 	(void)pinctrl_apply_state(cfg->pcfg, PINCTRL_STATE_SLEEP);
 	nrf_uarte_disable(uarte);
+
+	uarte_clk_release(dev);
 }
 
 static int uarte_nrfx_pm_action(const struct device *dev, enum pm_device_action action)
@@ -3146,7 +3256,19 @@ static int uarte_instance_init(const struct device *dev,
 #ifdef CONFIG_DEVICE_DEINIT_SUPPORT
 static int uarte_instance_deinit(const struct device *dev)
 {
-	return pm_device_driver_deinit(dev, uarte_nrfx_pm_action);
+	int err;
+
+	err = pm_device_driver_deinit(dev, uarte_nrfx_pm_action);
+	if (err < 0) {
+		goto _uarte_instance_deinit_err;
+	}
+
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_INIT)) {
+		uarte_clk_release(dev);
+	}
+
+_uarte_instance_deinit_err:
+	return err;
 }
 #endif
 
@@ -3238,6 +3360,14 @@ static int uarte_instance_deinit(const struct device *dev)
 #define UARTE_DISABLE_RX_INIT(node_id) \
 	.disable_rx = DT_PROP(node_id, disable_rx)
 
+#define UARTE_CLK_INIT(node_id)						       \
+	IF_ENABLED(UARTE_ANY_CLK_QUALITY,				       \
+		   (.clk_dev = CLK_DEV(node_id),			       \
+		    .clk_acc = CLK_ACC(node_id),))			       \
+	IF_ENABLED(UARTE_ANY_CLK_FREQ,					       \
+		   (.clk_frq = CLK_REQ_FRQ(node_id),))
+
+
 /* Get frequency divider that is used to adjust the BAUDRATE value. */
 #define UARTE_GET_BAUDRATE_DIV(f_pclk) (f_pclk / NRF_UARTE_BASE_FREQUENCY_16MHZ)
 
@@ -3252,7 +3382,7 @@ static int uarte_instance_deinit(const struct device *dev)
 
 /* Convert DT current-speed to a value that is written to the BAUDRATE register. */
 #define UARTE_GET_BAUDRATE(idx) \
-	UARTE_GET_BAUDRATE2(NRF_PERIPH_GET_FREQUENCY(UARTE(idx)), UARTE_PROP(idx, current_speed))
+	UARTE_GET_BAUDRATE2(CLK_SRC_FRQ(UARTE(idx)), UARTE_PROP(idx, current_speed))
 
 /* Macro for setting nRF specific configuration structures. */
 #define UARTE_NRF_CONFIG(idx) {							\
@@ -3333,7 +3463,7 @@ static int uarte_instance_deinit(const struct device *dev)
 			      "Unsupported baudrate");))		       \
 	static MAYBE_CONST struct uarte_nrfx_config uarte_##idx##z_config = {  \
 		COND_CODE_1(CONFIG_UART_USE_RUNTIME_CONFIGURE,		       \
-			(.clock_freq = NRF_PERIPH_GET_FREQUENCY(UARTE(idx)),), \
+			(.clock_freq = CLK_SRC_FRQ(UARTE(idx)),),	       \
 		    (IF_ENABLED(UARTE_HAS_FRAME_TIMEOUT,		       \
 			(.baudrate = UARTE_PROP(idx, current_speed),))	       \
 		     .nrf_baudrate = UARTE_GET_BAUDRATE(idx),		       \
@@ -3356,6 +3486,7 @@ static int uarte_instance_deinit(const struct device *dev)
 		UARTE_DISABLE_RX_INIT(UARTE(idx)),			       \
 		.poll_out_byte = &uarte##idx##_poll_out_byte,		       \
 		.poll_in_byte = &uarte##idx##_poll_in_byte,		       \
+		UARTE_CLK_INIT(UARTE(idx))				       \
 		IF_ENABLED(CONFIG_UART_##idx##_ASYNC,			       \
 				(.tx_cache = uarte##idx##_tx_cache,	       \
 				 .rx_flush_buf = uarte##idx##_flush_buf,))     \

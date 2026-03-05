@@ -16,6 +16,13 @@
 
 #define DT_DRV_COMPAT nordic_nrf_clock
 
+/* Structure used for synchronous clock request. */
+struct sync_req {
+	struct onoff_client cli;
+	struct k_sem sem;
+	int res;
+};
+
 static bool irq_connected;
 
 /* This function should be treated as static.
@@ -155,6 +162,43 @@ void common_clkstarted_handle(const struct device *dev)
 	if (callback) {
 		callback(dev, NULL, ((common_clock_data_t *)dev->data)->user_data);
 	}
+}
+
+static void sync_cb(struct onoff_manager *mgr, struct onoff_client *cli, uint32_t state, int res)
+{
+	struct sync_req *req = CONTAINER_OF(cli, struct sync_req, cli);
+
+	req->res = res;
+	k_sem_give(&req->sem);
+}
+
+int nrf_clock_control_request_sync(const struct device *dev,
+				   const struct nrf_clock_spec *spec,
+				   k_timeout_t timeout)
+{
+	struct sync_req req = {
+		.sem = Z_SEM_INITIALIZER(req.sem, 0, 1)
+	};
+	int err;
+
+	if (k_is_in_isr()) {
+		return -EWOULDBLOCK;
+	}
+
+	sys_notify_init_callback(&req.cli.notify, sync_cb);
+
+	err = nrf_clock_control_request(dev, spec, &req.cli);
+	if (err < 0) {
+		return err;
+	}
+
+	err = k_sem_take(&req.sem, timeout);
+	if (err < 0) {
+		nrf_clock_control_cancel_or_release(dev, spec, &req.cli);
+		return err;
+	}
+
+	return req.res;
 }
 
 #endif /* defined(CONFIG_CLOCK_CONTROL_NRFX) && !defined(CONFIG_CLOCK_CONTROL_NRF) */

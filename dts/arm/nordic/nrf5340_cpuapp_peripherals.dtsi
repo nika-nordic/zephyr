@@ -5,6 +5,7 @@
  */
 
 #include <zephyr/dt-bindings/regulator/nrf5x.h>
+#include <zephyr/dt-bindings/clock/nrf_clocks.h>
 
 dcnf: dcnf@0 {
 	compatible = "nordic,nrf-dcnf";
@@ -70,6 +71,7 @@ clock: clock@5000 {
 
 hfclk: hfclk@5000 {
 	compatible = "nordic,nrf-clock-hfclk";
+	#clock-cells = <0>;
 	reg = <0x5000 0x1000>;
 	interrupts = <5 NRF_DEFAULT_IRQ_PRIORITY>;
 	status = "okay";
@@ -91,6 +93,7 @@ hfclk192m: hfclk192m@5000 {
 
 hfclkaudio: hfclkaudio@5000 {
 	compatible = "nordic,nrf-clock-hfclkaudio";
+	#clock-cells = <0>;
 	reg = <0x5000 0x1000>;
 	interrupts = <5 NRF_DEFAULT_IRQ_PRIORITY>;
 	status = "okay";
@@ -172,6 +175,7 @@ uart0: uart@8000 {
 	reg = <0x8000 0x1000>;
 	interrupts = <8 NRF_DEFAULT_IRQ_PRIORITY>;
 	status = "disabled";
+	clocks = <&pclk16m NRF_DT_CLK_DEFAULT>;
 };
 
 i2c1: i2c@9000 {
@@ -213,6 +217,7 @@ uart1: uart@9000 {
 	reg = <0x9000 0x1000>;
 	interrupts = <9 NRF_DEFAULT_IRQ_PRIORITY>;
 	status = "disabled";
+	clocks = <&pclk16m NRF_DT_CLK_DEFAULT>;
 };
 
 spi4: spi@a000 {
