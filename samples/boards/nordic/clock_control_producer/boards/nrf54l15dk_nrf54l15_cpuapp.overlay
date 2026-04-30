@@ -1,0 +1,23 @@
+/*
+ * Showcase of the clock consumer scheme on the nRF54L series. The UARTE names its clock
+ * producer with nordic,clock-producer, so the driver requests it according to the scheme
+ * selected with CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_*. On this series the requestable HFXO
+ * producer is the xo node (nordic,nrf-clock-xo); the hfxo node is only a crystal descriptor
+ * and is not backed by a driver. Deleting the property makes the instance keep the clock
+ * that the hardware requests automatically. The property is independent of any clocks
+ * property, which only describes the base frequency and is left at the SoC default here.
+ */
+/ {
+	aliases {
+		clk-showcase-uart = &uart30;
+	};
+};
+
+&uart30 {
+	status = "okay";
+	pinctrl-0 = <&uart30_default>;
+	pinctrl-1 = <&uart30_sleep>;
+	pinctrl-names = "default", "sleep";
+	nordic,clock-producer = <&xo>;
+	current-speed = <9600>;
+};

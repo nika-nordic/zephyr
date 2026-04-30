@@ -332,6 +332,7 @@ clock: clock@5000 {
 	hfclk: hfclk {
 		compatible = "nordic,nrf-clock-hfclk";
 		status = "okay";
+		#clock-cells = <0>;
 	};
 
 	lfclk: lfclk {

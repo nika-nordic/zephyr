@@ -2,7 +2,10 @@ description: Nordic nRF family UARTE (UART with EasyDMA)
 
 compatible: "nordic,nrf-uarte"
 
-include: ["nordic,nrf-uart-common.yaml", "memory-region.yaml"]
+include:
+  - "nordic,nrf-uart-common.yaml"
+  - "memory-region.yaml"
+  - "nordic,clock-consumer.yaml"
 
 properties:
   endtx-stoptx-supported:

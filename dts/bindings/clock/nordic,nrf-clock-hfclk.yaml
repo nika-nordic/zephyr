@@ -5,4 +5,4 @@ description: Nordic nRF HFCLK clock control node
 
 compatible: "nordic,nrf-clock-hfclk"
 
-include: base.yaml
+include: [base.yaml, clock-controller.yaml]

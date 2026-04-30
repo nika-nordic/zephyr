@@ -1,0 +1,26 @@
+# Common property for Nordic peripherals that can request a clock producer to be
+# active while they operate. Include this from a peripheral binding to add the
+# optional `nordic,clock-producer` property.
+
+properties:
+  nordic,clock-producer:
+    type: phandle
+    description: |
+      Clock producer device to request while the peripheral is clocked, in
+      addition to whatever clock the hardware selects automatically. Use it to
+      raise the accuracy or rate of the peripheral's clock, for example pointing
+      it at the HFXO producer so the peripheral runs off the crystal instead of
+      the internal oscillator.
+
+      The referenced node must be a clock-control producer that is backed by a
+      driver (for example &hfclk on the nRF53 Series or &xo on the nRF54L
+      Series); a bare clock descriptor without a driver (such as a fixed-clock
+      node) cannot be requested.
+
+      This is independent of the `clocks` property, which describes the frequency
+      the peripheral is clocked at and is not acted upon. When this property is
+      absent, the driver takes no clock action and the default clock is used.
+
+      Whether the request is actually issued, and at which point in the device
+      lifecycle, is additionally gated by the driver's clock-management Kconfig
+      choice (see UART_NRFX_UARTE_CLOCK_MGMT for the UARTE driver).

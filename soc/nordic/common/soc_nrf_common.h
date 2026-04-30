@@ -278,6 +278,33 @@
 			     (DT_PROP_LAST(DT_CLOCKS_CTLR(node), supported_clock_frequency)))),	\
 		(NRFX_MHZ_TO_HZ(16)))
 
+/*
+ * Clock consumer helpers.
+ *
+ * The `nordic,clock-producer` property of a peripheral (clock consumer) node references the
+ * clock producer device to be requested while the peripheral is clocked, so that the
+ * peripheral runs off it instead of the clock that the hardware requests automatically.
+ * Presence of the property means that the peripheral driver is expected to request the
+ * referenced producer; absence means that no runtime action is taken. The desired clock
+ * source is selected by which producer node is referenced, for example `<&hfclk>` on the
+ * nRF53 Series to run off HFXO.
+ *
+ * This is orthogonal to the `clocks` property, which describes the frequency the peripheral
+ * is clocked at (see NRF_PERIPH_GET_FREQUENCY) and is not acted upon.
+ */
+
+/** @brief Check whether the node references a clock producer to be requested.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_PRESENT(node) DT_NODE_HAS_PROP(node, nordic_clock_producer)
+
+/** @brief Get the clock producer device referenced by the node.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_DEV(node) DEVICE_DT_GET(DT_PHANDLE(node, nordic_clock_producer))
+
 /**
  * @brief Utility macro to check if instance is fast by node, expands to 1 or 0.
  *

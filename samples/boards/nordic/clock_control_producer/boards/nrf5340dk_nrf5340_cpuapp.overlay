@@ -1,0 +1,21 @@
+/*
+ * Showcase of the clock consumer scheme: the UARTE names its clock producer with
+ * nordic,clock-producer, so the driver requests HFCLK (and thus HFXO) according to the
+ * scheme selected with CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_*. Deleting the property makes
+ * the instance keep the clock that the hardware requests automatically (HFINT).
+ */
+/ {
+	aliases {
+		clk-showcase-uart = &uart1;
+	};
+};
+
+&uart1 {
+	status = "okay";
+	nordic,clock-producer = <&hfclk>;
+	current-speed = <9600>;
+};
+
+&hfclk {
+	status = "okay";
+};
