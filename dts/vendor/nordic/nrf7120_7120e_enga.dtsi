@@ -48,7 +48,7 @@
 	};
 
 	clocks {
-		pclk: pclk {
+		pclk16m: pclk16m {
 			compatible = "fixed-clock";
 			#clock-cells = <0>;
 			clock-frequency = <DT_FREQ_M(16)>;
@@ -800,7 +800,7 @@
 				compatible = "nordic,nrf-grtc";
 				reg = <0xe2000 0x1000>;
 				cc-num = <16>;
-				clocks = <&lfxo>, <&pclk>;
+				clocks = <&lfxo>, <&pclk16m>;
 				clock-names = "lfclock", "hfclock";
 				status = "disabled";
 				extended-channels = <0>;

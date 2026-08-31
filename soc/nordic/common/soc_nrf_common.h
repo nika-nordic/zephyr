@@ -261,11 +261,12 @@
 
 /** @brief Get clock frequency that is used for the given node.
  *
- * Macro checks if node has clock property and if yes then if clock has clock_frequency property
- * then it is returned. If it has supported_clock_frequency property with the list of supported
- * frequencies then the last one is returned with assumption that they are ordered and the last
- * one is the highest. If node does not have clock then 16 MHz is returned which is the default
- * frequency.
+ * Macro checks if node has clock property and if yes then if the referenced node is a clock
+ * state (nordic,clock-state) then the frequency of the output that the state is clocked by
+ * is returned. Otherwise, if the clock has clock_frequency property then it is returned. If
+ * it has supported_clock_frequency property with the list of supported frequencies then the
+ * last one is returned with assumption that they are ordered and the last one is the highest.
+ * If node does not have clock then 16 MHz is returned which is the default frequency.
  *
  * @param node Devicetree node.
  *
@@ -273,10 +274,41 @@
  */
 #define NRF_PERIPH_GET_FREQUENCY(node) \
 	COND_CODE_1(DT_CLOCKS_HAS_IDX(node, 0),							\
-		(COND_CODE_1(DT_NODE_HAS_PROP(DT_CLOCKS_CTLR(node), clock_frequency),		\
+		(COND_CODE_1(DT_NODE_HAS_PROP(DT_CLOCKS_CTLR(node), clock_output),		\
+		    (DT_PROP(DT_PHANDLE(DT_CLOCKS_CTLR(node), clock_output), clock_frequency)),	\
+		    (COND_CODE_1(DT_NODE_HAS_PROP(DT_CLOCKS_CTLR(node), clock_frequency),	\
 			     (DT_PROP(DT_CLOCKS_CTLR(node), clock_frequency)),			\
-			     (DT_PROP_LAST(DT_CLOCKS_CTLR(node), supported_clock_frequency)))),	\
+			     (DT_PROP_LAST(DT_CLOCKS_CTLR(node),				\
+					   supported_clock_frequency)))))),			\
 		(NRFX_MHZ_TO_HZ(16)))
+
+/*
+ * Clock consumer helpers.
+ *
+ * The `clocks` property of a peripheral (clock consumer) node references a clock state
+ * (nordic,clock-state) that the SoC defines, for example `<&pclk16m_hfxo>`. The state names
+ * both the output that gives the frequency the peripheral is clocked at, which is never
+ * acted upon and is read with NRF_PERIPH_GET_FREQUENCY(), and optionally a producer that has
+ * to be running for that state. Selecting a state whose producer is present means that the
+ * peripheral driver is expected to request it, so that the peripheral runs off it instead of
+ * the clock that the hardware requests automatically; selecting a state without a producer
+ * means that no runtime action is taken.
+ */
+
+/** @brief Check whether the node selects a clock state with a producer to be requested.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_PRESENT(node)						\
+	UTIL_AND(DT_NODE_HAS_PROP(node, clocks),				\
+		 DT_NODE_HAS_PROP(DT_CLOCKS_CTLR(node), clock_producer))
+
+/** @brief Get the clock producer device of the clock state selected by the node.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_DEV(node) \
+	DEVICE_DT_GET(DT_PHANDLE(DT_CLOCKS_CTLR(node), clock_producer))
 
 /**
  * @brief Utility macro to check if instance is fast by node, expands to 1 or 0.

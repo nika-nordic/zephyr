@@ -1,0 +1,42 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Clock states of the nRF5340 application core clocks. Each state is a pure descriptor selected
+ * by a consumer's `clocks` property; it is /omit-if-no-ref/ so it costs nothing until referenced.
+ * Included at the end of the SoC devicetree, after the referenced signals and producers.
+ */
+
+/ {
+	clock-states {
+		/* States of the 16 MHz peripheral clock. Both run the peripheral at the same
+		 * frequency; they differ in whether HFCLK is requested, which switches the
+		 * source from HFINT to HFXO, trading startup latency for bitrate accuracy.
+		 */
+		/omit-if-no-ref/ pclk16m_hfint: pclk16m-hfint {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk16m>;
+		};
+
+		/omit-if-no-ref/ pclk16m_hfxo: pclk16m-hfxo {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk16m>;
+			clock-producer = <&hfclk>;
+		};
+
+		/* State of the audio clock. It is always sourced from the HFXO-backed audio PLL
+		 * (HFCLKAUDIO), so there is a single state; the hfclkaudio producer is requested
+		 * for it.
+		 */
+		/omit-if-no-ref/ aclk_hfclkaudio: aclk-hfclkaudio {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&aclk>;
+			clock-producer = <&hfclkaudio>;
+		};
+	};
+};

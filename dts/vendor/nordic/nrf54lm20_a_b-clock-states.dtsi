@@ -1,0 +1,24 @@
+/*
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Clock states of the nRF54LM20 clocks. Each state is a pure descriptor selected by a
+ * consumer's `clocks` property; it is /omit-if-no-ref/ so it costs nothing until referenced.
+ * Included at the end of the SoC devicetree, after the referenced signals and producers.
+ */
+
+/ {
+	clock-states {
+		/* State of the 24 MHz audio clock (for example TDM). The XO24M producer derives it
+		 * from the HFXO; there is no internal-oscillator variant, so this is the only state.
+		 */
+		/omit-if-no-ref/ aclk_xo24m: aclk-xo24m {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&aclk>;
+			clock-producer = <&xo24m>;
+		};
+	};
+};

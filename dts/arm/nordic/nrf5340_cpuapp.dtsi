@@ -38,6 +38,24 @@
 		zephyr,flash-controller = &flash_controller;
 	};
 
+	clocks {
+		pclk16m: pclk16m {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <DT_FREQ_M(16)>;
+		};
+
+		/* Audio clock (for example I2S). The frequency is a default that a board or
+		 * application overlay can override to any value the audio PLL (HFCLKAUDIO)
+		 * supports; the value here only advertises the frequency and is not acted upon.
+		 */
+		aclk: aclk {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <11289600>;
+		};
+	};
+
 	soc {
 		compatible = "simple-bus";
 
@@ -152,3 +170,9 @@
 	/* Use RTC for system clock, instead of SysTick. */
 	status = "disabled";
 };
+
+/* Clock states (nordic,clock-state) that consumers select through their `clocks` property.
+ * Kept in a separate file, like board pinctrl states, and included last so that the clock
+ * signals and producers they reference are already defined.
+ */
+#include "nrf5340_cpuapp-clock-states.dtsi"

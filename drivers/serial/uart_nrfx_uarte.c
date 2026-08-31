@@ -46,6 +46,21 @@ LOG_MODULE_REGISTER(uart_nrfx_uarte, CONFIG_UART_LOG_LEVEL);
 #define UARTE_FOR_EACH_INSTANCE(f, sep, off_code, ...)                                             \
 	NRFX_FOREACH_PRESENT(UARTE, f, sep, off_code, __VA_ARGS__)
 
+/* Determine if any enabled instance selects a clock state that has a producer to request.
+ *
+ * This is the sole on/off switch for clock producer management: an instance opts in by
+ * selecting a clock state whose clock-producer is present, and opts out by selecting one
+ * without a producer or by having no `clocks` property at all. The clock management scheme
+ * Kconfig choice then only selects when the producer is requested, not whether.
+ */
+#define IS_CLK_PRESENT(unused, prefix, i, _) \
+	(COND_CODE_1(DT_NODE_HAS_STATUS_OKAY(UARTE(prefix##i)), \
+		     (NRF_DT_CLK_PRESENT(UARTE(prefix##i))), (0)))
+
+#if UARTE_FOR_EACH_INSTANCE(IS_CLK_PRESENT, (||), (0))
+#define UARTE_ANY_CLK 1
+#endif
+
 /* Determine if any instance is using interrupt driven API. */
 #define IS_INT_DRIVEN(unused, prefix, i, _) \
 	(IS_ENABLED(CONFIG_HAS_HW_NRF_UARTE##prefix##i) && \
@@ -279,9 +294,15 @@ struct uarte_nrfx_data {
 #ifdef UARTE_ANY_ASYNC
 	struct uarte_async_cb *async;
 #endif
-#ifdef CONFIG_UART_NRFX_UARTE_HFXO_ON_ACTIVE
-	struct onoff_client hfxo_client;
-	struct k_sem hfxo_ready;
+#if defined(CONFIG_UART_NRFX_UARTE_HFXO_ON_ACTIVE) || defined(UARTE_ANY_CLK)
+	/* Owns the request that the driver holds on the clock, be it the HFXO of the legacy
+	 * activity scheme or the producer of the power management and initialization schemes.
+	 * All of them act on the device as a whole, so a single client is enough, and the two
+	 * schemes never coexist in a valid build.
+	 */
+	struct onoff_client clk_cli;
+	/* Signalled from the request completion notification, see uarte_clk_ready(). */
+	struct k_sem clk_ready;
 #endif
 	atomic_val_t poll_out_lock;
 	atomic_t flags;
@@ -416,6 +437,10 @@ struct uarte_nrfx_config {
 #endif /* UARTE_ANY_ASYNC */
 	uint8_t *poll_out_byte;
 	uint8_t *poll_in_byte;
+#ifdef UARTE_ANY_CLK
+	/* Clock producer to be requested or NULL if instance keeps the default clock. */
+	const struct device *clk_dev;
+#endif
 };
 
 /* Determine if instance is using an approach with counting bytes with TIMER (legacy). */
@@ -435,6 +460,89 @@ static inline NRF_UARTE_Type *get_uarte_instance(const struct device *dev)
 	const struct uarte_nrfx_config *config = dev->config;
 
 	return config->uarte_regs;
+}
+
+#if defined(CONFIG_UART_NRFX_UARTE_HFXO_ON_ACTIVE) || defined(UARTE_ANY_CLK)
+/** @brief Completion notification of a clock request.
+ *
+ * Runs in whatever context finishes the clock startup and releases the requesting site
+ * (uarte_clk_request() or uarte_pm_resume()) when it is waiting for the clock to be up.
+ */
+static void uarte_clk_ready(struct onoff_manager *mgr, struct onoff_client *cli, uint32_t state,
+			    int res)
+{
+	struct uarte_nrfx_data *data = CONTAINER_OF(cli, struct uarte_nrfx_data, clk_cli);
+
+	ARG_UNUSED(mgr);
+	ARG_UNUSED(state);
+	ARG_UNUSED(res);
+
+	k_sem_give(&data->clk_ready);
+}
+#endif
+
+/** @brief Request the clock producer referenced by the instance.
+ *
+ * The request is issued asynchronously, so it can be started from any context, including
+ * before the kernel is running and with interrupts locked. When the calling context allows
+ * it, the function then blocks until the producer is up, so that the peripheral is clocked
+ * by it from the first subsequent operation. Otherwise it returns right away, and until the
+ * producer has started the peripheral runs on the clock that the hardware requests
+ * automatically, gaining accuracy once the producer is up.
+ *
+ * @param dev Device.
+ */
+static void uarte_clk_request(const struct device *dev)
+{
+#ifdef UARTE_ANY_CLK
+	const struct uarte_nrfx_config *config = dev->config;
+	struct uarte_nrfx_data *data = dev->data;
+
+	if (config->clk_dev == NULL) {
+		return;
+	}
+
+	k_sem_reset(&data->clk_ready);
+	sys_notify_init_callback(&data->clk_cli.notify, uarte_clk_ready);
+
+	/* NULL specification leaves every clock attribute unconstrained, so the producer
+	 * is simply started.
+	 */
+	(void)nrf_clock_control_request(config->clk_dev, NULL, &data->clk_cli);
+
+	/* Blocking is only possible from a thread, which excludes the pre-kernel request
+	 * of the initialization scheme. The completion still runs and gives the semaphore,
+	 * it is simply not waited for.
+	 */
+	if (!k_is_in_isr() && !k_is_pre_kernel()) {
+		(void)k_sem_take(&data->clk_ready, K_FOREVER);
+	}
+#else
+	ARG_UNUSED(dev);
+#endif
+}
+
+/** @brief Release the clock producer referenced by the instance.
+ *
+ * Cancelling covers the case where the producer has not finished starting yet, so that
+ * the request is given up whichever state it is in.
+ *
+ * @param dev Device.
+ */
+static void uarte_clk_release(const struct device *dev)
+{
+#ifdef UARTE_ANY_CLK
+	const struct uarte_nrfx_config *config = dev->config;
+	struct uarte_nrfx_data *data = dev->data;
+
+	if (config->clk_dev == NULL) {
+		return;
+	}
+
+	(void)nrf_clock_control_cancel_or_release(config->clk_dev, NULL, &data->clk_cli);
+#else
+	ARG_UNUSED(dev);
+#endif
 }
 
 #if !defined(CONFIG_UART_NRFX_UARTE_NO_IRQ)
@@ -3055,18 +3163,6 @@ static void wait_for_tx_stopped(const struct device *dev)
 	}
 }
 
-#ifdef CONFIG_UART_NRFX_UARTE_HFXO_ON_ACTIVE
-static void uarte_hfxo_active(struct onoff_manager *mgr,
-		    struct onoff_client *cli,
-		    uint32_t state,
-		    int res)
-{
-	struct uarte_nrfx_data *data = CONTAINER_OF(cli, struct uarte_nrfx_data, hfxo_client);
-
-	k_sem_give(&data->hfxo_ready);
-}
-#endif
-
 static void uarte_pm_resume(const struct device *dev)
 {
 	const struct uarte_nrfx_config *cfg = dev->config;
@@ -3077,17 +3173,21 @@ static void uarte_pm_resume(const struct device *dev)
 	bool isr_mode = k_is_in_isr() || k_is_pre_kernel();
 	int err;
 
-	k_sem_reset(&data->hfxo_ready);
-	sys_notify_init_callback(&data->hfxo_client.notify, uarte_hfxo_active);
-	err = onoff_request(mgr, &data->hfxo_client);
+	k_sem_reset(&data->clk_ready);
+	sys_notify_init_callback(&data->clk_cli.notify, uarte_clk_ready);
+	err = onoff_request(mgr, &data->clk_cli);
 	__ASSERT_NO_MSG(err >= 0);
 
 	/* Don't wait for the HFXO if in an ISR or pre-kernel context */
 	if (!isr_mode) {
-		err = k_sem_take(&data->hfxo_ready, K_FOREVER);
+		err = k_sem_take(&data->clk_ready, K_FOREVER);
 		__ASSERT_NO_MSG(err == 0);
 	}
 #endif
+
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_PM)) {
+		uarte_clk_request(dev);
+	}
 
 	if (IS_ENABLED(CONFIG_PM_DEVICE_RUNTIME) || !LOW_POWER_ENABLED(cfg)) {
 		uarte_periph_enable(dev);
@@ -3166,10 +3266,14 @@ static int uarte_pm_suspend(const struct device *dev)
 	struct onoff_manager *mgr = z_nrf_clock_control_get_onoff(CLOCK_CONTROL_NRF_SUBSYS_HF);
 	int onoff_err;
 
-	sys_notify_init_callback(&data->hfxo_client.notify, uarte_hfxo_active);
-	onoff_err = onoff_cancel_or_release(mgr, &data->hfxo_client);
+	sys_notify_init_callback(&data->clk_cli.notify, uarte_clk_ready);
+	onoff_err = onoff_cancel_or_release(mgr, &data->clk_cli);
 	__ASSERT_NO_MSG(onoff_err >= 0);
 #endif
+
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_PM)) {
+		uarte_clk_release(dev);
+	}
 
 	return err;
 }
@@ -3256,6 +3360,10 @@ static int uarte_instance_init(const struct device *dev,
 #endif
 #endif
 
+#if defined(CONFIG_UART_NRFX_UARTE_HFXO_ON_ACTIVE) || defined(UARTE_ANY_CLK)
+	k_sem_init(&data->clk_ready, 0, 1);
+#endif
+
 	/* Apply sleep state by default.
 	 * If PM is disabled, the default state will be applied in pm_device_driver_init.
 	 */
@@ -3273,10 +3381,6 @@ static int uarte_instance_init(const struct device *dev,
 	nrf_uarte_configure(uarte, &cfg->hw_config);
 #endif
 
-#ifdef CONFIG_UART_NRFX_UARTE_HFXO_ON_ACTIVE
-	k_sem_init(&data->hfxo_ready, 0, 1);
-#endif
-
 #ifdef UARTE_ANY_ASYNC
 	if (data->async) {
 		err = uarte_async_init(dev);
@@ -3291,13 +3395,36 @@ static int uarte_instance_init(const struct device *dev,
 		return err;
 	}
 
-	return pm_device_driver_init(dev, uarte_nrfx_pm_action);
+	err = pm_device_driver_init(dev, uarte_nrfx_pm_action);
+	if (err < 0) {
+		return err;
+	}
+
+	/* Requested last, so that a failure on any of the paths above cannot leave the
+	 * producer requested for an instance that is not operational.
+	 */
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_INIT)) {
+		uarte_clk_request(dev);
+	}
+
+	return 0;
 }
 
 #ifdef CONFIG_DEVICE_DEINIT_SUPPORT
 static int uarte_instance_deinit(const struct device *dev)
 {
-	return pm_device_driver_deinit(dev, uarte_nrfx_pm_action);
+	int err;
+
+	err = pm_device_driver_deinit(dev, uarte_nrfx_pm_action);
+	if (err < 0) {
+		return err;
+	}
+
+	if (IS_ENABLED(CONFIG_UART_NRFX_UARTE_CLOCK_MGMT_ON_INIT)) {
+		uarte_clk_release(dev);
+	}
+
+	return 0;
 }
 #endif
 
@@ -3413,6 +3540,11 @@ static int uarte_instance_deinit(const struct device *dev)
 	COND_CODE_1(UTIL_AND(NRF_UARTE_HAS_FRAME_SIZE, UARTE_HAS_PROP(idx, data_bits)),	\
 		    (_CFG_DATA_BITS(UARTE_PROP(idx, data_bits))),			\
 		    (UART_CFG_DATA_BITS_8))
+
+#define UARTE_CLK_INIT(node_id)						       \
+	IF_ENABLED(UARTE_ANY_CLK,					       \
+		   (.clk_dev = COND_CODE_1(NRF_DT_CLK_PRESENT(node_id),	       \
+					   (NRF_DT_CLK_DEV(node_id)), (NULL)),))
 
 /* Get frequency divider that is used to adjust the BAUDRATE value. */
 #define UARTE_GET_BAUDRATE_DIV(f_pclk) (f_pclk / NRF_UARTE_BASE_FREQUENCY_16MHZ)
@@ -3564,6 +3696,7 @@ static int uarte_instance_deinit(const struct device *dev)
 		UARTE_DISABLE_RX_INIT(UARTE(idx)),			       \
 		.poll_out_byte = &uarte##idx##_poll_out_byte,		       \
 		.poll_in_byte = &uarte##idx##_poll_in_byte,		       \
+		UARTE_CLK_INIT(UARTE(idx))				       \
 		IF_ENABLED(CONFIG_UART_##idx##_ASYNC,			       \
 				(.tx_cache = uarte##idx##_tx_cache,	       \
 				 .rx_flush_buf = uarte##idx##_flush_buf,))     \

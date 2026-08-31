@@ -1,0 +1,16 @@
+/*
+ * Case: nRF54LM20, tdm as the consumer, 24 MHz audio clock sourced from the HFXO via XO24M.
+ *
+ * nRF54LM20 has no I2S; TDM is its audio peripheral. tdm is only used to carry the clock state;
+ * the sample does not operate the TDM. The aclk_xo24m state names the 24 MHz audio signal and the
+ * xo24m producer (nordic,nrf-clock-xo24m), which the sample requests through the clock control API.
+ */
+/ {
+	aliases {
+		clk-consumer = &tdm;
+	};
+};
+
+&tdm {
+	clocks = <&aclk_xo24m>;
+};

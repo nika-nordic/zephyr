@@ -1,0 +1,67 @@
+sample:
+  name: Clock Control States
+common:
+  tags:
+    - clock_control
+tests:
+  # nRF54L15: uart30 consumer, 16 MHz base, requesting the HFXO producer (xo).
+  sample.boards.nrf.clock_control_states.nrf54l15.uart30_pclk16m_hfxo:
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_uart30_pclk16m_hfxo.overlay"
+
+  # nRF54L15: uart00 consumer, core clock (HCLKCORE) from the internal oscillator, no producer.
+  sample.boards.nrf.clock_control_states.nrf54l15.uart00_hclkcore_hfint:
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_uart00_hclkcore_hfint.overlay"
+
+  # nRF54L15: uart00 consumer, core clock (HCLKCORE) from the HFXO, requesting xo.
+  sample.boards.nrf.clock_control_states.nrf54l15.uart00_hclkcore_hfxo:
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_uart00_hclkcore_hfxo.overlay"
+
+  # nRF54L15: i2s20 consumer, 32 MHz clock from the internal oscillator, no producer.
+  sample.boards.nrf.clock_control_states.nrf54l15.i2s20_pclk32m_hfint:
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_i2s20_pclk32m_hfint.overlay"
+
+  # nRF54L15: i2s20 consumer, 32 MHz clock from the HFXO, requesting xo.
+  sample.boards.nrf.clock_control_states.nrf54l15.i2s20_pclk32m_hfxo:
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_i2s20_pclk32m_hfxo.overlay"
+
+  # nRF54LM20: tdm consumer, 24 MHz audio clock from the HFXO, requesting xo24m.
+  sample.boards.nrf.clock_control_states.nrf54lm20.tdm_aclk_xo24m:
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_aclk_xo24m.overlay"
+
+  # nRF5340: uart1 consumer, 16 MHz base, requesting HFCLK (and thus the HFXO).
+  sample.boards.nrf.clock_control_states.nrf5340.uart1_pclk16m_hfxo:
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    integration_platforms:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_uart1_pclk16m_hfxo.overlay"
+      - EXTRA_CONF_FILE="boards/nrf5340dk_uart1_pclk16m_hfxo.conf"
+
+  # nRF5340: i2s0 consumer, audio clock from the HFXO-backed audio PLL, requesting hfclkaudio.
+  sample.boards.nrf.clock_control_states.nrf5340.i2s0_aclk_hfclkaudio:
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_i2s0_aclk_hfclkaudio.overlay"
+      - EXTRA_CONF_FILE="boards/nrf5340dk_i2s0_aclk_hfclkaudio.conf"

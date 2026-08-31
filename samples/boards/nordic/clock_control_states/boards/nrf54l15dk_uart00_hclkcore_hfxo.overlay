@@ -1,0 +1,17 @@
+/*
+ * Case: nRF54L15, uart00 as the consumer, core high-frequency clock (HCLKCORE) sourced from
+ * the HFXO.
+ *
+ * uart00 is only used to carry the clock state; the sample does not operate the UARTE. The
+ * hclkcore_hfxo state names the HCLKCORE signal and the HFXO producer, which on this series
+ * is the xo node (nordic,nrf-clock-xo). The sample requests xo through the clock control API.
+ */
+/ {
+	aliases {
+		clk-consumer = &uart00;
+	};
+};
+
+&uart00 {
+	clocks = <&hclkcore_hfxo>;
+};

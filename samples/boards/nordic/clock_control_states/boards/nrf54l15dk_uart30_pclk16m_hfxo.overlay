@@ -1,0 +1,17 @@
+/*
+ * Case: nRF54L15, uart30 as the consumer, 16 MHz base with the HFXO requested as a producer.
+ *
+ * uart30 is only used to carry the clock state; the sample does not operate the UARTE. The
+ * pclk16m_hfxo state runs at 16 MHz and names the HFXO producer, which on this series is the
+ * xo node (nordic,nrf-clock-xo); the hfxo node is only a crystal descriptor and is not backed
+ * by a driver. The sample requests xo through the clock control API.
+ */
+/ {
+	aliases {
+		clk-consumer = &uart30;
+	};
+};
+
+&uart30 {
+	clocks = <&pclk16m_hfxo>;
+};

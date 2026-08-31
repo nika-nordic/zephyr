@@ -1,0 +1,17 @@
+/*
+ * Case: nRF54L15, uart00 as the consumer, core high-frequency clock (HCLKCORE) sourced from
+ * the internal oscillator.
+ *
+ * uart00 is only used to carry the clock state; the sample does not operate the UARTE. The
+ * hclkcore_hfint state names the HCLKCORE signal with no producer, so the sample takes no
+ * clock action and just reports the frequency.
+ */
+/ {
+	aliases {
+		clk-consumer = &uart00;
+	};
+};
+
+&uart00 {
+	clocks = <&hclkcore_hfint>;
+};

@@ -1,0 +1,16 @@
+/*
+ * Case: nRF54L15, i2s20 as the consumer, 32 MHz peripheral clock sourced from the HFXO.
+ *
+ * i2s20 is only used to carry the clock state; the sample does not operate the I2S. The
+ * pclk32m_hfxo state names the 32 MHz signal and the HFXO producer, which on this series is
+ * the xo node (nordic,nrf-clock-xo). The sample requests xo through the clock control API.
+ */
+/ {
+	aliases {
+		clk-consumer = &i2s20;
+	};
+};
+
+&i2s20 {
+	clocks = <&pclk32m_hfxo>;
+};

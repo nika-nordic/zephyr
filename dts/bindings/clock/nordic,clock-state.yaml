@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Named clock state of a Nordic nRF peripheral clock.
+
+  A clock state describes one valid way for a peripheral to be clocked: the output that
+  determines the frequency, and optionally a producer that has to be running for the
+  peripheral to be clocked that way. The SoC defines every state that its hardware
+  supports, and a clock consumer selects one of them with its `clocks` property:
+
+      &uart30 {
+              clocks = <&pclk16m_hfxo>;
+      };
+
+  Because the state couples the frequency and the producer, a consumer cannot express an
+  invalid combination such as a 16 MHz base clock served by a 128 MHz producer.
+
+  A state node is a pure descriptor; it is not backed by a device. Only the producer it
+  references is requested at runtime, and only when the consumer driver is configured to
+  act on it (see UART_NRFX_UARTE_CLOCK_MGMT for the UARTE driver). A state without a
+  producer therefore means "no runtime action": the peripheral keeps the clock that the
+  hardware requests automatically.
+
+compatible: "nordic,clock-state"
+
+include: [base.yaml, clock-controller.yaml]
+
+properties:
+  "#clock-cells":
+    const: 0
+
+  clock-output:
+    type: phandle
+    required: true
+    description: |
+      Clock output that this state is clocked by, as a reference to a node exposing a
+      clock-frequency property (typically a fixed-clock). It provides the frequency the
+      peripheral runs at in this state, and is never acted upon at runtime.
+
+  clock-producer:
+    type: phandle
+    description: |
+      Clock producer that has to be running for this state, as a reference to a
+      clock-control producer node backed by a driver (for example &hfclk on the nRF53
+      Series or &xo on the nRF54L Series). Omit it for states that need no runtime action.

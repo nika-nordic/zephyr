@@ -1,0 +1,17 @@
+/*
+ * Case: nRF54L15, i2s20 as the consumer, 32 MHz peripheral clock sourced from the internal
+ * oscillator.
+ *
+ * i2s20 is only used to carry the clock state; the sample does not operate the I2S. The
+ * pclk32m_hfint state names the 32 MHz signal with no producer, so the sample takes no clock
+ * action and just reports the frequency.
+ */
+/ {
+	aliases {
+		clk-consumer = &i2s20;
+	};
+};
+
+&i2s20 {
+	clocks = <&pclk32m_hfint>;
+};
