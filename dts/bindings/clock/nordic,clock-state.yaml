@@ -34,9 +34,12 @@ properties:
     type: phandle
     required: true
     description: |
-      Clock output that this state is clocked by, as a reference to a node exposing a
-      clock-frequency property (typically a fixed-clock). It provides the frequency the
-      peripheral runs at in this state, and is never acted upon at runtime.
+      Clock output that this state is clocked by, as a reference to a node - typically a
+      fixed-clock, or a plain bindingless node for an output whose rate is owned by the
+      producer (for example an audio "aclk"). It identifies the hardware clock mux position
+      for this state and is never acted upon at runtime. If the output node exposes a
+      clock-frequency it provides the frequency the peripheral runs at; if it does not, the
+      rate is instead taken from the clock-producer of this state.
 
   clock-producer:
     type: phandle

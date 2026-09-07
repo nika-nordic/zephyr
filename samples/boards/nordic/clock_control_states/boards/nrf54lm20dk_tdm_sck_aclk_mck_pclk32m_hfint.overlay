@@ -1,0 +1,34 @@
+/*
+ * TDM case 2: SCK on the 24 MHz audio clock (ACLK via XO24M), MCK on the 32 MHz peripheral clock
+ * from the internal oscillator (no producer).
+ *
+ * Two clock states are given: index 0 (sck) and index 1 (mck). SCK maps to the ACLK mux and
+ * requests xo24m; MCK maps to the PCLK32M mux and needs no runtime request. Only one producer is
+ * requested.
+ */
+/ {
+	aliases {
+		clk-consumer = &tdm;
+	};
+};
+
+&pinctrl {
+	tdm_default_alt: tdm_default_alt {
+		group1 {
+			psels = <NRF_PSEL(TDM_SCK_M, 1, 8)>,
+				<NRF_PSEL(TDM_FSYNC_M, 1, 9)>,
+				<NRF_PSEL(TDM_SDOUT, 1, 10)>,
+				<NRF_PSEL(TDM_SDIN, 1, 11)>,
+				<NRF_PSEL(TDM_MCK, 1, 12)>;
+		};
+	};
+};
+
+&tdm {
+	status = "okay";
+	pinctrl-0 = <&tdm_default_alt>;
+	pinctrl-names = "default";
+	mck-frequency = <12288000>;
+	clocks = <&aclk_xo24m>, <&pclk32m_hfint>;
+	clock-names = "sck", "mck";
+};

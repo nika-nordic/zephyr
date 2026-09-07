@@ -41,12 +41,49 @@ tests:
     extra_args:
       - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_i2s20_pclk32m_hfxo.overlay"
 
-  # nRF54LM20: tdm consumer, 24 MHz audio clock from the HFXO, requesting xo24m.
+  # nRF54LM20: tdm driver prototype. Each case compiles i2s_nrf_tdm.c against the clock state(s)
+  # selected for SCK (clocks index 0) and MCK (clocks index 1, or index 0 when a single state is
+  # given). CONFIG_I2S=y instantiates the driver so its clock-state path is exercised.
+
+  # Case 1: SCK and MCK both on ACLK (24 MHz) from the HFXO via XO24M (single state, one producer).
   sample.boards.nrf.clock_control_states.nrf54lm20.tdm_aclk_xo24m:
     platform_allow:
       - nrf54lm20dk/nrf54lm20a/cpuapp
     extra_args:
       - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_aclk_xo24m.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54lm20dk_tdm.conf"
+
+  # Case 2: SCK on ACLK (xo24m), MCK on PCLK32M from the internal oscillator (no MCK producer).
+  sample.boards.nrf.clock_control_states.nrf54lm20.tdm_sck_aclk_mck_pclk32m_hfint:
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_sck_aclk_mck_pclk32m_hfint.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54lm20dk_tdm.conf"
+
+  # Case 3: SCK on ACLK (xo24m), MCK on PCLK32M backed by the HFXO (xo) - two distinct producers.
+  sample.boards.nrf.clock_control_states.nrf54lm20.tdm_sck_aclk_mck_pclk32m_hfxo:
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_sck_aclk_mck_pclk32m_hfxo.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54lm20dk_tdm.conf"
+
+  # Case 4: SCK and MCK both on PCLK32M from the internal oscillator (single state, no producer).
+  sample.boards.nrf.clock_control_states.nrf54lm20.tdm_pclk32m_hfint:
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_pclk32m_hfint.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54lm20dk_tdm.conf"
+
+  # Case 5: SCK and MCK both on PCLK32M backed by the HFXO (single state, xo requested).
+  sample.boards.nrf.clock_control_states.nrf54lm20.tdm_pclk32m_hfxo:
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_pclk32m_hfxo.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54lm20dk_tdm.conf"
 
   # nRF5340: uart1 consumer, 16 MHz base, requesting HFCLK (and thus the HFXO).
   sample.boards.nrf.clock_control_states.nrf5340.uart1_pclk16m_hfxo:
@@ -65,3 +102,13 @@ tests:
     extra_args:
       - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_i2s0_aclk_hfclkaudio.overlay"
       - EXTRA_CONF_FILE="boards/nrf5340dk_i2s0_aclk_hfclkaudio.conf"
+
+  # nRF7120: tdm consumer, audio clock from the audio PLL (AUXPLL, aliased audiopll), requesting
+  # the audiopll producer - uniform with the nRF54H20 audiopll case.
+  sample.boards.nrf.clock_control_states.nrf7120.tdm_aclk_audiopll:
+    platform_allow:
+      - nrf7120dk/nrf7120/cpuapp
+    integration_platforms:
+      - nrf7120dk/nrf7120/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf7120dk_tdm_aclk_audiopll.overlay"

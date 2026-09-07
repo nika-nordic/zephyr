@@ -81,9 +81,12 @@
 		};
 
 		aclk: aclk {
-			compatible = "fixed-clock";
+			/*
+			 * Audio clock signal - a bindingless node that only identifies the ACLK
+			 * mux position for clock states (matched by node identity). Its rate is
+			 * owned by the state's producer (xo24m), so it carries no clock-frequency.
+			 */
 			#clock-cells = <0>;
-			clock-frequency = <DT_FREQ_M(24)>;
 		};
 	};
 

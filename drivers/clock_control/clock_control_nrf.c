@@ -788,9 +788,13 @@ static void hfclkaudio_init(void)
 	/* As specified in the nRF5340 PS:
 	 *
 	 * FREQ_VALUE = 2^16 * ((12 * f_out / 32M) - 4)
+	 *
+	 * Round to the nearest achievable FREQ_VALUE so a nominal target such as
+	 * 12288000 lands on the same divider as auxpll/audiopll (39846 -> real
+	 * 12288004 Hz, +0.37 ppm) instead of truncating down to 39845 (12287963 Hz).
 	 */
 	const uint32_t freq_value =
-		(uint32_t)((384ULL * frequency) / 15625) - 262144;
+		(uint32_t)DIV_ROUND_CLOSEST(384ULL * frequency, 15625) - 262144;
 
 #if NRF_CLOCK_HAS_HFCLKAUDIO
 	nrf_clock_hfclkaudio_config_set(NRF_CLOCK, freq_value);

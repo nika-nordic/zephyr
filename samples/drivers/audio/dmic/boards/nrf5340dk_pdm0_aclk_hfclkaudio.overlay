@@ -1,0 +1,14 @@
+/*
+ * PDM clock-state case: pdm0 on the audio clock (ACLK) from the HFXO-backed audio PLL.
+ *
+ * The aclk_hfclkaudio state maps to the ACLK mux and names the &hfclkaudio producer. The audio
+ * PLL rate is advertised by the aclk signal's clock-frequency and must match the
+ * clock-frequency the producer is configured with (set in the board overlay).
+ */
+&aclk {
+	clock-frequency = <12288000>;
+};
+
+&pdm0 {
+	clocks = <&aclk_hfclkaudio>;
+};

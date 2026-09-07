@@ -38,12 +38,27 @@ properties:
   nordic,ficrs:
     required: true
 
+  clock-frequency:
+    type: int
+    description: |
+      Target PLL output frequency in Hz. Preferred over the deprecated
+      nordic,frequency. Specify the nominal target (e.g. 12288000 for the 48 kHz
+      audio family); the driver rounds it to the nearest achievable fractional
+      PLL divider (see formula above) using nordic,range, nordic,out-div and the
+      source clock - the same scheme as the audiopll shim. The real output may
+      therefore differ from the request by the divider quantisation (a few ppm).
+      The value must lie within the producible band for the configured
+      range/out-div/source; otherwise the build fails. This gives clock consumers
+      a uniform, target-oriented interface across Nordic audio clock producers.
+
   nordic,frequency:
     type: int
-    required: true
+    deprecated: true
     description: |
-      Value used to set the fractional PLL divider ratio (can be set between
-      divider ratios 4 to 5). Valid values shown in dt-bindings/clock/nrf-auxpll.h.
+      Deprecated in favor of clock-frequency. Value used to set the fractional
+      PLL divider ratio (can be set between divider ratios 4 to 5) directly.
+      Valid values shown in dt-bindings/clock/nrf-auxpll.h. When both this and
+      clock-frequency are present, this explicit value takes precedence.
 
   nordic,out-div:
     type: int

@@ -45,14 +45,25 @@
 			clock-frequency = <DT_FREQ_M(16)>;
 		};
 
+		/* 32 MHz peripheral clock used by audio peripherals such as I2S and PDM. */
+		pclk32m: pclk32m {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <DT_FREQ_M(32)>;
+		};
+
 		/* Audio clock (for example I2S). The frequency is a default that a board or
 		 * application overlay can override to any value the audio PLL (HFCLKAUDIO)
 		 * supports; the value here only advertises the frequency and is not acted upon.
 		 */
 		aclk: aclk {
-			compatible = "fixed-clock";
+			/*
+			 * Audio clock signal - a bindingless node that only identifies the ACLK
+			 * mux position for clock states (matched by node identity). Its rate is
+			 * owned by the state's producer (hfclkaudio), so it carries no
+			 * clock-frequency.
+			 */
 			#clock-cells = <0>;
-			clock-frequency = <11289600>;
 		};
 	};
 

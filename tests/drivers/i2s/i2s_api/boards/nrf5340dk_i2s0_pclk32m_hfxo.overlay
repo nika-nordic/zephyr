@@ -1,0 +1,9 @@
+/*
+ * I2S clock-state case: i2s0 on the 32 MHz peripheral clock backed by the HFXO.
+ *
+ * The pclk32m_hfxo state maps to the PCLK32M mux and names the &hfclk producer, which the driver
+ * requests so the peripheral runs off the HFXO for bitrate accuracy.
+ */
+&i2s0 {
+	clocks = <&pclk32m_hfxo>;
+};

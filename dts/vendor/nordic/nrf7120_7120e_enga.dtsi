@@ -81,6 +81,15 @@
 			#clock-cells = <0>;
 			clock-frequency = <DT_FREQ_M(256)>;
 		};
+
+		aclk: aclk {
+			/*
+			 * Audio clock signal - a bindingless node that only identifies the ACLK
+			 * mux position for clock states (matched by node identity). Its rate is
+			 * owned by the state's producer (audiopll), so it carries no clock-frequency.
+			 */
+			#clock-cells = <0>;
+		};
 	};
 
 	reserved-memory {
@@ -1022,7 +1031,10 @@
 				};
 			};
 
-			audio_auxpll: auxpll@130000 {
+			/* audiopll alias gives a producer reference that is uniform with the
+			 * nRF54H20 audiopll node, so clock states can be written identically.
+			 */
+			audiopll: audio_auxpll: auxpll@130000 {
 				compatible = "nordic,nrf-auxpll";
 				reg = <0x130000 0x1000>;
 				interrupts = <304 NRF_DEFAULT_IRQ_PRIORITY>;
@@ -1033,6 +1045,13 @@
 				 * not defined yet
 				 */
 				nordic,ficrs = <&ficr 0>;
+				/*
+				 * 48 kHz audio family, nominal target. The driver rounds
+				 * this to the nearest fractional PLL divider (39846, real
+				 * output 12288004 Hz, +0.37 ppm), matching audiopll on
+				 * nRF54H20. Replaces the deprecated nordic,frequency token.
+				 */
+				clock-frequency = <12288000>;
 				nordic,out-div = <12>;
 				nordic,out-drive = <0>;
 				nordic,current-tune = <9>;
@@ -1103,3 +1122,9 @@
 		};
 	};
 };
+
+/* Clock states (nordic,clock-state) that consumers select through their `clocks` property.
+ * Kept in a separate file, like board pinctrl states, and included last so that the clock
+ * signals and producers they reference are already defined.
+ */
+#include "nrf7120_7120e_enga-clock-states.dtsi"

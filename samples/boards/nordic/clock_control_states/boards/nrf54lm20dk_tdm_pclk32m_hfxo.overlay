@@ -1,9 +1,8 @@
 /*
- * TDM case 1: SCK and MCK both on the 24 MHz audio clock (ACLK), sourced from the HFXO via XO24M.
+ * TDM case 5: SCK and MCK both on the 32 MHz peripheral clock backed by the HFXO (pclk32m_hfxo).
  *
- * A single clock state is given, so it applies to both SCK and MCK. The aclk_xo24m state maps to
- * the ACLK mux position and names the xo24m producer, which the TDM driver requests (through one
- * client per signal, i.e. twice here for the same producer, balanced by two releases).
+ * A single state applies to both signals. It maps to the PCLK32M mux and names the xo producer,
+ * which is requested once per signal (twice, same producer) so the peripheral runs off the HFXO.
  */
 / {
 	aliases {
@@ -28,5 +27,5 @@
 	pinctrl-0 = <&tdm_default_alt>;
 	pinctrl-names = "default";
 	mck-frequency = <12288000>;
-	clocks = <&aclk_xo24m>;
+	clocks = <&pclk32m_hfxo>;
 };

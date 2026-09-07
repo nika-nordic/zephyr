@@ -1,0 +1,4 @@
+/* TDM case 5: SCK and MCK both on PCLK32M backed by the HFXO (single state, xo requested). */
+&tdm {
+	clocks = <&pclk32m_hfxo>;
+};

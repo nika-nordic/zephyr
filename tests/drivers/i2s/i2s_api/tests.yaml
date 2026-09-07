@@ -47,3 +47,106 @@ tests:
       - nrf54h20dk/nrf54h20/cpuapp
     integration_platforms:
       - nrf54h20dk/nrf54h20/cpuapp
+
+  # Clock-state prototype: build-only coverage that i2s0 (nRF5340) and tdm (nRF54LM20) build
+  # against a nordic,clock-state selected with the `clocks` property. On both SoCs the split
+  # clock control drivers are the default, so no extra Kconfig is needed.
+
+  # I2S on nRF5340: i2s0 on the 32 MHz peripheral clock from the internal oscillator.
+  drivers.i2s.clock_state.nrf5340.i2s0_pclk32m_hfint:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    integration_platforms:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_i2s0_pclk32m_hfint.overlay"
+
+  # I2S on nRF5340: i2s0 on the 32 MHz peripheral clock backed by the HFXO (&hfclk).
+  drivers.i2s.clock_state.nrf5340.i2s0_pclk32m_hfxo:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    integration_platforms:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_i2s0_pclk32m_hfxo.overlay"
+
+  # I2S on nRF5340: i2s0 on the audio clock (ACLK) from the HFXO-backed audio PLL (&hfclkaudio).
+  drivers.i2s.clock_state.nrf5340.i2s0_aclk_hfclkaudio:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    integration_platforms:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_i2s0_aclk_hfclkaudio.overlay"
+
+  # TDM on nRF54LM20 (used as i2s-node0). Each case layers the tdm base overlay with a
+  # clock-state overlay that selects the SCK (clocks index 0) and MCK (index 1) states.
+
+  # Case 1: SCK and MCK both on ACLK (24 MHz) from the HFXO via XO24M (single state).
+  drivers.i2s.clock_state.nrf54lm20.tdm_aclk_xo24m:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    integration_platforms:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_base.overlay;boards/nrf54lm20dk_tdm_aclk_xo24m.overlay"
+
+  # Case 2: SCK on ACLK (xo24m), MCK on PCLK32M from the internal oscillator (no MCK producer).
+  drivers.i2s.clock_state.nrf54lm20.tdm_sck_aclk_mck_pclk32m_hfint:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    integration_platforms:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_base.overlay;boards/nrf54lm20dk_tdm_sck_aclk_mck_pclk32m_hfint.overlay"
+
+  # Case 3: SCK on ACLK (xo24m), MCK on PCLK32M backed by the HFXO (xo) - two distinct producers.
+  drivers.i2s.clock_state.nrf54lm20.tdm_sck_aclk_mck_pclk32m_hfxo:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    integration_platforms:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_base.overlay;boards/nrf54lm20dk_tdm_sck_aclk_mck_pclk32m_hfxo.overlay"
+
+  # Case 4: SCK and MCK both on PCLK32M from the internal oscillator (single state, no producer).
+  drivers.i2s.clock_state.nrf54lm20.tdm_pclk32m_hfint:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    integration_platforms:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_base.overlay;boards/nrf54lm20dk_tdm_pclk32m_hfint.overlay"
+
+  # Case 5: SCK and MCK both on PCLK32M backed by the HFXO (single state, xo requested).
+  drivers.i2s.clock_state.nrf54lm20.tdm_pclk32m_hfxo:
+    depends_on: i2s
+    tags: drivers
+    build_only: true
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    integration_platforms:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_tdm_base.overlay;boards/nrf54lm20dk_tdm_pclk32m_hfxo.overlay"

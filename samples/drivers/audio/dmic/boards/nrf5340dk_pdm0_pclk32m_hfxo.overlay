@@ -1,0 +1,9 @@
+/*
+ * PDM clock-state case: pdm0 on the 32 MHz peripheral clock backed by the HFXO.
+ *
+ * The pclk32m_hfxo state maps to the PCLK32M mux and names the &hfclk producer, requested so the
+ * peripheral runs off the HFXO.
+ */
+&pdm0 {
+	clocks = <&pclk32m_hfxo>;
+};

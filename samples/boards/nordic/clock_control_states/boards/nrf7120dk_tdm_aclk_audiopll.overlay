@@ -1,0 +1,24 @@
+/*
+ * Case: nRF7120, tdm as the consumer, audio clock sourced from the audio PLL (AUXPLL, aliased
+ * audiopll for uniformity with nRF54H20).
+ *
+ * tdm is only used to carry the clock state; the sample does not operate the TDM. The
+ * aclk_audiopll state names the audio-clock signal and the audiopll producer (nordic,nrf-auxpll),
+ * which the sample requests through the clock control API. The signal frequency defaults to the
+ * SoC value; override &aclk (and the producer's clock-frequency) here to pick a different audio
+ * frequency. The audio PLL is disabled by default, so enable it (its PCLK32M source is already
+ * present in the SoC devicetree).
+ */
+/ {
+	aliases {
+		clk-consumer = &tdm;
+	};
+};
+
+&audiopll {
+	status = "okay";
+};
+
+&tdm {
+	clocks = <&aclk_audiopll>;
+};

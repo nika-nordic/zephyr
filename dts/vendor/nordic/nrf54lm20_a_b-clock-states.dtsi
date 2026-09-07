@@ -11,6 +11,22 @@
 
 / {
 	clock-states {
+		/* States of the 32 MHz peripheral clock (for example TDM/PDM SCK/MCK on PCLK32M).
+		 * Same frequency in both; they differ in whether the HFXO is requested for accuracy.
+		 */
+		/omit-if-no-ref/ pclk32m_hfint: pclk32m-hfint {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk32m>;
+		};
+
+		/omit-if-no-ref/ pclk32m_hfxo: pclk32m-hfxo {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk32m>;
+			clock-producer = <&xo>;
+		};
+
 		/* State of the 24 MHz audio clock (for example TDM). The XO24M producer derives it
 		 * from the HFXO; there is no internal-oscillator variant, so this is the only state.
 		 */

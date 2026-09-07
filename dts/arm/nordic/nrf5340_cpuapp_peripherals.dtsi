@@ -85,6 +85,13 @@ clock: clock@5000 {
 	hfclkaudio: hfclkaudio {
 		compatible = "nordic,nrf-clock-hfclkaudio";
 		status = "okay";
+		/*
+		 * Default audio rate (48 kHz family). This is the rate advertised to consumers
+		 * that select an audio clock state (aclk_hfclkaudio), since the aclk signal itself
+		 * carries no frequency. Override with clock-frequency in a board overlay for other
+		 * audio families (for example 11289600 for 44.1 kHz).
+		 */
+		clock-frequency = <12288000>;
 	};
 };
 

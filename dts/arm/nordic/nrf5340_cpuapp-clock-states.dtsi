@@ -28,6 +28,22 @@
 			clock-producer = <&hfclk>;
 		};
 
+		/* States of the 32 MHz peripheral clock (for example I2S/PDM on PCLK32M). Same
+		 * frequency in both; they differ in whether HFCLK (HFXO) is requested.
+		 */
+		/omit-if-no-ref/ pclk32m_hfint: pclk32m-hfint {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk32m>;
+		};
+
+		/omit-if-no-ref/ pclk32m_hfxo: pclk32m-hfxo {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk32m>;
+			clock-producer = <&hfclk>;
+		};
+
 		/* State of the audio clock. It is always sourced from the HFXO-backed audio PLL
 		 * (HFCLKAUDIO), so there is a single state; the hfclkaudio producer is requested
 		 * for it.
