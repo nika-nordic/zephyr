@@ -5,7 +5,7 @@ description: |
   Named clock state of a Nordic nRF peripheral clock.
 
   A clock state describes one valid way for a peripheral to be clocked: the output that
-  determines the frequency, and optionally a producer that has to be running for the
+  determines the frequency, and/or a producer that has to be running for the
   peripheral to be clocked that way. The SoC defines every state that its hardware
   supports, and a clock consumer selects one of them with its `clocks` property:
 
@@ -32,7 +32,6 @@ properties:
 
   clock-output:
     type: phandle
-    required: true
     description: |
       Clock output that this state is clocked by, as a reference to a node - typically a
       fixed-clock, or a plain bindingless node for an output whose rate is owned by the
@@ -41,12 +40,20 @@ properties:
       clock-frequency it provides the frequency the peripheral runs at; if it does not, the
       rate is instead taken from the clock-producer of this state.
 
+      Omit it for a state whose producer is a frequency-selectable (DVFS) generator that
+      clocks the peripheral directly with no fixed output rail (for example the nRF54H20
+      hsfll120). Such a state has no mux position, and the frequency the peripheral runs at
+      is the requested operating point given by producer-frequency-hz (or, absent that, the
+      producer's own clock-frequency). A state must have a clock-output, a clock-producer,
+      or both.
+
   clock-producer:
     type: phandle
     description: |
       Clock producer that has to be running for this state, as a reference to a
       clock-control producer node backed by a driver (for example &hfclk on the nRF53
       Series or &xo on the nRF54L Series). Omit it for states that need no runtime action.
+      Required when clock-output is omitted.
 
   producer-frequency-hz:
     type: int

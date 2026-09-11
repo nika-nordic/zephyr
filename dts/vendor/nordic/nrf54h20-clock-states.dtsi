@@ -33,5 +33,18 @@
 			clock-producer = <&fll16m>;
 			producer-accuracy-ppm = <1>;
 		};
+
+		/* State for a fast peripheral clocked directly by the hsfll120 global HSFLL. hsfll120
+		 * is a frequency-selectable (DVFS) generator with no fixed output rail, so the state
+		 * has no clock-output: the frequency the peripheral runs at is the requested operating
+		 * point, given by producer-frequency-hz and passed as the nrf_clock_spec frequency.
+		 * Selecting it requests hsfll120 at 320 MHz (the highest supported operating point).
+		 */
+		/omit-if-no-ref/ hsfll120_320m: hsfll120-320m {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-producer = <&hsfll120>;
+			producer-frequency-hz = <320000000>;
+		};
 	};
 };

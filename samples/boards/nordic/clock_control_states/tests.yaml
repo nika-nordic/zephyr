@@ -130,3 +130,13 @@ tests:
       - nrf54h20dk/nrf54h20/cpuapp
     extra_args:
       - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_uarte130_fll16m_hfxo.overlay"
+
+  # nRF54H20: uarte120 consumer clocked directly by the hsfll120 DVFS generator, requested at
+  # 320 MHz via a producer-only state (no clock-output; frequency is the operating point).
+  sample.boards.nrf.clock_control_states.nrf54h20.uarte120_hsfll120_320m:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_uarte120_hsfll120_320m.overlay"
