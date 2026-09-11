@@ -30,3 +30,53 @@ config ADC_NRFX_SAADC
 	select NRFX_SAADC
 	help
 	  Enable support for nrfx SAADC driver.
+
+choice ADC_NRFX_SAADC_CLOCK_MGMT
+	prompt "SAADC clock management scheme"
+	default ADC_NRFX_SAADC_CLOCK_MGMT_ON_INIT
+	depends on ADC_NRFX_SAADC
+	help
+	  Determines when the driver requests and releases the clock producer of the clock
+	  state selected by the `clocks` property of the SAADC node.
+
+	  This only selects the timing, not whether clock management happens at all: the
+	  instance is acted upon exactly when it selects a clock state that has a producer
+	  (for example pclk16m_hfxo), typically in a devicetree overlay. A state without a
+	  producer (pclk16m_hfint) or no `clocks` property is never acted upon regardless of
+	  the scheme, so the scheme has no effect and no code is generated for it.
+
+	  Requesting the producer lets the SAADC be clocked by a more accurate source than the
+	  one the hardware requests automatically (for example HFXO instead of HFINT), at the
+	  cost of the producer startup latency.
+
+config ADC_NRFX_SAADC_CLOCK_MGMT_ON_INIT
+	bool "Manage clock on driver initialization"
+	help
+	  The producer is requested when the driver is initialized and held for as long as the
+	  driver exists. The request is issued before the kernel is running, so the driver does
+	  not block on it: the producer starts in the background and the SAADC reaches full
+	  accuracy once it is up, typically well before the first conversion.
+
+config ADC_NRFX_SAADC_CLOCK_MGMT_ON_PM
+	bool "Manage clock on power management transitions"
+	depends on PM_DEVICE_RUNTIME
+	help
+	  The producer is requested when the driver is resumed and released when it is
+	  suspended, so it is active for as long as the instance is in use. Because a synchronous
+	  read resumes the device ahead of the conversion, the resume blocks until the producer
+	  is up, so the conversion is already clocked by it.
+
+config ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE
+	bool "Manage clock for the duration of each conversion"
+	help
+	  The producer is requested right before a conversion and released once the conversion
+	  completes, covering both the synchronous and the asynchronous read paths.
+
+	  A synchronous read (adc_read()) requests the producer from the calling thread and blocks
+	  until it is up, so the conversion is clocked by it from the first sample; the release
+	  happens in the same thread once the conversion returns. An asynchronous read
+	  (adc_read_async()) instead issues the request without blocking and returns immediately; the
+	  conversion is triggered once the producer has started, and the release happens when the
+	  conversion sequence completes, which may be in the SAADC interrupt.
+
+endchoice

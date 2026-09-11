@@ -1,0 +1,17 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ */
+
+/*
+ * SAADC clock state: 16 MHz peripheral clock with the HFXO requested as a producer. On nRF5340
+ * the producer is HFCLK (which switches the source from HFINT to HFXO), so it is enabled here.
+ */
+&adc {
+	clocks = <&pclk16m_hfxo>;
+};
+
+&hfclk {
+	status = "okay";
+};

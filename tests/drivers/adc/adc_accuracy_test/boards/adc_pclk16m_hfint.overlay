@@ -1,0 +1,15 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ */
+
+/*
+ * SAADC clock state: 16 MHz peripheral clock left on its HFINT source. This state has no
+ * producer, so the driver performs no clock request regardless of the clock-management scheme;
+ * it is the default behaviour. SoC-agnostic: pclk16m_hfint is defined identically on nRF5340,
+ * nRF54L, nRF54H20 and nRF7120.
+ */
+&adc {
+	clocks = <&pclk16m_hfint>;
+};

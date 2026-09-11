@@ -1,0 +1,14 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Copyright (c) 2026 Nordic Semiconductor ASA
+ */
+
+/*
+ * SAADC clock state: 16 MHz peripheral clock with the HFXO requested as a producer. As on nRF54L,
+ * the producer is the xo node (nordic,nrf-clock-xo), which the board enables by default; the hfxo
+ * node is only a crystal descriptor and is not backed by a driver.
+ */
+&adc {
+	clocks = <&pclk16m_hfxo>;
+};

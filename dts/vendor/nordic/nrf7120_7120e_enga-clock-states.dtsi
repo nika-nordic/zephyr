@@ -12,6 +12,23 @@
 
 / {
 	clock-states {
+		/* States of the 16 MHz peripheral clock. Both run the peripheral at the same
+		 * frequency; they differ in whether the HFXO is requested (via the xo producer),
+		 * which trades startup latency for bitrate accuracy.
+		 */
+		/omit-if-no-ref/ pclk16m_hfint: pclk16m-hfint {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk16m>;
+		};
+
+		/omit-if-no-ref/ pclk16m_hfxo: pclk16m-hfxo {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&pclk16m>;
+			clock-producer = <&xo>;
+		};
+
 		/* Audio clock. The aclk signal advertises the target audio frequency; the audiopll
 		 * producer (the AUXPLL, aliased audiopll for uniformity with nRF54H20) is requested
 		 * and driven to that rate from PCLK32M. A single state, always PLL-backed.
