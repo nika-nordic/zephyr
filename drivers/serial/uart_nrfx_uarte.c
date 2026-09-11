@@ -61,6 +61,20 @@ LOG_MODULE_REGISTER(uart_nrfx_uarte, CONFIG_UART_LOG_LEVEL);
 #define UARTE_ANY_CLK 1
 #endif
 
+/* Determine if any enabled instance selects a clock state that carries a producer spec.
+ *
+ * When set, the producer of at least one instance must be requested with a non-NULL
+ * nrf_clock_spec (built from the state's producer-* properties). When unset, every producer
+ * is requested with a NULL spec, so the spec plumbing compiles away entirely.
+ */
+#define IS_CLK_SPEC_PRESENT(unused, prefix, i, _) \
+	(COND_CODE_1(DT_NODE_HAS_STATUS_OKAY(UARTE(prefix##i)), \
+		     (NRF_DT_CLK_HAS_SPEC(UARTE(prefix##i))), (0)))
+
+#if UARTE_FOR_EACH_INSTANCE(IS_CLK_SPEC_PRESENT, (||), (0))
+#define UARTE_ANY_CLK_SPEC 1
+#endif
+
 /* Determine if any instance is using interrupt driven API. */
 #define IS_INT_DRIVEN(unused, prefix, i, _) \
 	(IS_ENABLED(CONFIG_HAS_HW_NRF_UARTE##prefix##i) && \
@@ -441,6 +455,14 @@ struct uarte_nrfx_config {
 	/* Clock producer to be requested or NULL if instance keeps the default clock. */
 	const struct device *clk_dev;
 #endif
+#ifdef UARTE_ANY_CLK_SPEC
+	/* Specification for the producer request, built from the selected state's producer-*
+	 * properties. Instances whose state carries no spec leave this zero-initialized; a zero
+	 * frequency marks them at request time so the producer is requested with a NULL
+	 * specification (its default configuration).
+	 */
+	struct nrf_clock_spec clk_spec;
+#endif
 };
 
 /* Determine if instance is using an approach with counting bytes with TIMER (legacy). */
@@ -481,6 +503,33 @@ static void uarte_clk_ready(struct onoff_manager *mgr, struct onoff_client *cli,
 }
 #endif
 
+#ifdef UARTE_ANY_CLK_SPEC
+/** @brief Resolve the producer specification of an instance to a request argument.
+ *
+ * The spec is embedded by value in the const config. A spec with no constraints (every field
+ * zero) is equivalent to no spec, so it is reported as NULL and the request path is identical
+ * to instances that carry no producer spec at all.
+ *
+ * @param config Instance configuration.
+ *
+ * @return Pointer to the spec, or NULL when it carries no constraint.
+ */
+static inline const struct nrf_clock_spec *uarte_clk_spec(const struct uarte_nrfx_config *config)
+{
+	const struct nrf_clock_spec *spec = &config->clk_spec;
+
+	/* A spec-carrying state always resolves to a non-zero frequency (producer-frequency-hz
+	 * or the state's clock-frequency), so frequency == 0 marks an instance whose selected
+	 * state has no producer spec: request the producer with its default configuration.
+	 */
+	if (spec->frequency == 0) {
+		return NULL;
+	}
+
+	return spec;
+}
+#endif
+
 /** @brief Request the clock producer referenced by the instance.
  *
  * The request is issued asynchronously, so it can be started from any context, including
@@ -502,13 +551,20 @@ static void uarte_clk_request(const struct device *dev)
 		return;
 	}
 
+#ifdef UARTE_ANY_CLK_SPEC
+	const struct nrf_clock_spec *spec = uarte_clk_spec(config);
+#else
+	const struct nrf_clock_spec *spec = NULL;
+#endif
+
 	k_sem_reset(&data->clk_ready);
 	sys_notify_init_callback(&data->clk_cli.notify, uarte_clk_ready);
 
-	/* NULL specification leaves every clock attribute unconstrained, so the producer
-	 * is simply started.
+	/* The specification names the producer configuration to request (for example an accuracy
+	 * that selects a specific source). A NULL specification leaves every clock attribute
+	 * unconstrained, so the producer is simply started with its default configuration.
 	 */
-	(void)nrf_clock_control_request(config->clk_dev, NULL, &data->clk_cli);
+	(void)nrf_clock_control_request(config->clk_dev, spec, &data->clk_cli);
 
 	/* Blocking is only possible from a thread, which excludes the pre-kernel request
 	 * of the initialization scheme. The completion still runs and gives the semaphore,
@@ -535,11 +591,17 @@ static void uarte_clk_release(const struct device *dev)
 	const struct uarte_nrfx_config *config = dev->config;
 	struct uarte_nrfx_data *data = dev->data;
 
+#ifdef UARTE_ANY_CLK_SPEC
+	const struct nrf_clock_spec *spec = uarte_clk_spec(config);
+#else
+	const struct nrf_clock_spec *spec = NULL;
+#endif
+
 	if (config->clk_dev == NULL) {
 		return;
 	}
 
-	(void)nrf_clock_control_cancel_or_release(config->clk_dev, NULL, &data->clk_cli);
+	(void)nrf_clock_control_cancel_or_release(config->clk_dev, spec, &data->clk_cli);
 #else
 	ARG_UNUSED(dev);
 #endif
@@ -3546,6 +3608,19 @@ static int uarte_instance_deinit(const struct device *dev)
 		   (.clk_dev = COND_CODE_1(NRF_DT_CLK_PRESENT(node_id),	       \
 					   (NRF_DT_CLK_DEV(node_id)), (NULL)),))
 
+/* Initialize the embedded producer specification from the selected clock state's producer-*
+ * properties. Only emitted for instances that carry a spec; other instances leave the field
+ * zero-initialized (treated as "no spec" at request time). Builds where no instance uses a spec
+ * do not define the field at all, so the plumbing compiles away entirely.
+ */
+#ifdef UARTE_ANY_CLK_SPEC
+#define UARTE_CLK_SPEC_INIT(idx)					       \
+	IF_ENABLED(NRF_DT_CLK_HAS_SPEC(UARTE(idx)),			       \
+		   (.clk_spec = NRF_DT_CLK_SPEC(UARTE(idx)),))
+#else
+#define UARTE_CLK_SPEC_INIT(idx)
+#endif
+
 /* Get frequency divider that is used to adjust the BAUDRATE value. */
 #define UARTE_GET_BAUDRATE_DIV(f_pclk) (f_pclk / NRF_UARTE_BASE_FREQUENCY_16MHZ)
 
@@ -3697,6 +3772,7 @@ static int uarte_instance_deinit(const struct device *dev)
 		.poll_out_byte = &uarte##idx##_poll_out_byte,		       \
 		.poll_in_byte = &uarte##idx##_poll_in_byte,		       \
 		UARTE_CLK_INIT(UARTE(idx))				       \
+		UARTE_CLK_SPEC_INIT(idx)				       \
 		IF_ENABLED(CONFIG_UART_##idx##_ASYNC,			       \
 				(.tx_cache = uarte##idx##_tx_cache,	       \
 				 .rx_flush_buf = uarte##idx##_flush_buf,))     \

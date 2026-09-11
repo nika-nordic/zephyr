@@ -112,3 +112,21 @@ tests:
       - nrf7120dk/nrf7120/cpuapp
     extra_args:
       - EXTRA_DTC_OVERLAY_FILE="boards/nrf7120dk_tdm_aclk_audiopll.overlay"
+
+  # nRF54H20: uarte130 consumer, 16 MHz from fll16m in open-loop (no producer spec).
+  sample.boards.nrf.clock_control_states.nrf54h20.uarte130_fll16m_hfint:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_uarte130_fll16m_hfint.overlay"
+
+  # nRF54H20: uarte130 consumer, 16 MHz from fll16m switched to HFXO bypass via producer spec.
+  sample.boards.nrf.clock_control_states.nrf54h20.uarte130_fll16m_hfxo:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_uarte130_fll16m_hfxo.overlay"

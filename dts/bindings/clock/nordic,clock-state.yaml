@@ -47,3 +47,27 @@ properties:
       Clock producer that has to be running for this state, as a reference to a
       clock-control producer node backed by a driver (for example &hfclk on the nRF53
       Series or &xo on the nRF54L Series). Omit it for states that need no runtime action.
+
+  producer-frequency-hz:
+    type: int
+    description: |
+      Minimum frequency (in Hz) the producer must provide for this state, mapped to the
+      frequency field of the nrf_clock_spec passed to nrf_clock_control_request(). Omit to
+      leave the frequency unconstrained (the producer keeps its default). Only meaningful
+      together with clock-producer.
+
+  producer-accuracy-ppm:
+    type: int
+    description: |
+      Required producer accuracy (in parts-per-million, lower is stricter), mapped to the
+      accuracy field of the nrf_clock_spec. A value of 1 selects the best available accuracy
+      (NRF_CLOCK_CONTROL_ACCURACY_MAX). For example, on the nRF54H20 fll16m this selects the
+      HFXO-bypass source instead of the open-loop default. Omit to leave accuracy
+      unconstrained. Only meaningful together with clock-producer.
+
+  producer-precision:
+    type: int
+    description: |
+      Required producer precision, mapped to the precision field of the nrf_clock_spec
+      (0 = default, 1 = high). Omit to leave precision at its default. Only meaningful
+      together with clock-producer.
