@@ -46,5 +46,18 @@
 			clock-producer = <&hsfll120>;
 			producer-frequency-hz = <320000000>;
 		};
+
+		/* Audio clock. The aclk signal advertises the target audio frequency (owned by the
+		 * audiopll producer, whose clock-frequency gives the rate in Hz); the audiopll is
+		 * requested and driven to that rate. A single state, always PLL-backed. Used by audio
+		 * peripherals (TDM130, PDM130) for the ACLK mux position, alongside the pclk16m states
+		 * for the PCLK mux position.
+		 */
+		/omit-if-no-ref/ aclk_audiopll: aclk-audiopll {
+			compatible = "nordic,clock-state";
+			#clock-cells = <0>;
+			clock-output = <&aclk>;
+			clock-producer = <&audiopll>;
+		};
 	};
 };

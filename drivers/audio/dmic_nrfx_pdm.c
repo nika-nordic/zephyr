@@ -47,11 +47,17 @@ LOG_MODULE_REGISTER(dmic_nrfx_pdm, CONFIG_AUDIO_DMIC_LOG_LEVEL);
 
 #if defined(CONFIG_SOC_SERIES_NRF54H) || defined(CONFIG_SOC_SERIES_NRF92)
 #undef DMIC_NRFX_CLOCK_FREQ
-#define DMIC_NRFX_CLOCK_FREQ       MHZ(16)
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ DT_PROP_OR(DT_NODELABEL(audiopll), frequency, 0)
+#define DMIC_NRFX_CLOCK_FREQ MHZ(16)
+/* clock-frequency is the preferred rate; the deprecated frequency, when set, takes precedence. */
+#define DMIC_NRFX_AUDIO_CLOCK_FREQ                                                                  \
+	DT_PROP_OR(DT_NODELABEL(audiopll), frequency,                                              \
+		   DT_PROP_OR(DT_NODELABEL(audiopll), clock_frequency, 0))
 #define AUDIO_ASSERT_MSG                                                                           \
-	"Clock source ACLK requires frequency property to be set in the audiopll node."
-#define AUDIO_FREQUENCY_DEFINED DT_NODE_HAS_PROP(DT_NODELABEL(audiopll), frequency)
+	"Clock source ACLK requires clock-frequency (or the deprecated frequency) to be set in "  \
+	"the audiopll node."
+#define AUDIO_FREQUENCY_DEFINED                                                                    \
+	(DT_NODE_HAS_PROP(DT_NODELABEL(audiopll), frequency) ||                                    \
+	 DT_NODE_HAS_PROP(DT_NODELABEL(audiopll), clock_frequency))
 
 #elif DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
 /* Target output frequency of the AUXPLL (the driver rounds it to the nearest

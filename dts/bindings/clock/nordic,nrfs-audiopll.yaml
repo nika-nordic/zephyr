@@ -8,11 +8,22 @@ compatible: "nordic,nrfs-audiopll"
 include: base.yaml
 
 properties:
+  clock-frequency:
+    type: int
+    description: |
+      Audio PLL output frequency in Hz. This is the preferred property, replacing the
+      deprecated frequency. It also advertises the rate to clock consumers that select an
+      audio clock state (the aclk signal itself carries no frequency), giving a uniform
+      clock-frequency interface across the Nordic audio clock producers (matching auxpll on
+      nRF7120 and hfclkaudio on nRF5340).
+
+      See zephyr/include/zephyr/dt-bindings/clock/nrfs-audiopll.h for predefined frequencies.
+
   frequency:
     type: int
-    required: true
+    deprecated: true
     description: |
-      Initial frequency in Hertz.
+      Deprecated in favor of clock-frequency. Initial frequency in Hertz. When both this and
+      clock-frequency are present, this explicit value takes precedence.
 
-      See zephyr/include/zephyr/dt-bindings/nrfs_audiopll.h for
-      predefined frequencies.
+      See zephyr/include/zephyr/dt-bindings/clock/nrfs-audiopll.h for predefined frequencies.

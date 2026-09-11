@@ -27,7 +27,7 @@ i2s_rxtx: &tdm130 {
 };
 
 &audiopll {
-	frequency = <NRFS_AUDIOPLL_FREQ_AUDIO_48K>;
+	clock-frequency = <12288000>; /* 12.288 MHz, 48 kHz audio family */
 	status = "okay";
 };
 

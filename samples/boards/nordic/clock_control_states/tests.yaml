@@ -140,3 +140,68 @@ tests:
       - nrf54h20dk/nrf54h20/cpuapp
     extra_args:
       - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_uarte120_hsfll120_320m.overlay"
+
+  # nRF54H20: audio peripherals (tdm130, pdm130) exercising the clock-state model. Each case
+  # compiles the driver (CONFIG_I2S / CONFIG_AUDIO_DMIC) so its clock-state path is instantiated
+  # for the selected state: pclk16m_hfint / pclk16m_hfxo map to the PCLK mux (16 MHz), while
+  # aclk_audiopll maps to the ACLK mux and requests the audiopll producer.
+
+  # tdm130 on PCLK (16 MHz) from fll16m open-loop (no producer).
+  sample.boards.nrf.clock_control_states.nrf54h20.tdm130_pclk16m_hfint:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_tdm130_pclk16m_hfint.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54h20dk_tdm.conf"
+
+  # tdm130 on PCLK (16 MHz) with fll16m locked to the HFXO.
+  sample.boards.nrf.clock_control_states.nrf54h20.tdm130_pclk16m_hfxo:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_tdm130_pclk16m_hfxo.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54h20dk_tdm.conf"
+
+  # tdm130 on ACLK from the audiopll producer.
+  sample.boards.nrf.clock_control_states.nrf54h20.tdm130_aclk_audiopll:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_tdm130_aclk_audiopll.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54h20dk_tdm.conf"
+
+  # pdm130 on PCLK (16 MHz) from fll16m open-loop (no producer).
+  sample.boards.nrf.clock_control_states.nrf54h20.pdm130_pclk16m_hfint:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_pdm130_pclk16m_hfint.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54h20dk_pdm.conf"
+
+  # pdm130 on PCLK (16 MHz) with fll16m locked to the HFXO.
+  sample.boards.nrf.clock_control_states.nrf54h20.pdm130_pclk16m_hfxo:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_pdm130_pclk16m_hfxo.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54h20dk_pdm.conf"
+
+  # pdm130 on ACLK from the audiopll producer.
+  sample.boards.nrf.clock_control_states.nrf54h20.pdm130_aclk_audiopll:
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    integration_platforms:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_pdm130_aclk_audiopll.overlay"
+      - EXTRA_CONF_FILE="boards/nrf54h20dk_pdm.conf"

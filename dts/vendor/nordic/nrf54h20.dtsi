@@ -8,8 +8,6 @@
 #include <nordic/nrf_common.dtsi>
 
 #include <zephyr/dt-bindings/adc/nrf-saadc.h>
-#include <zephyr/dt-bindings/clock/nrfs-audiopll.h>
-#include <zephyr/dt-bindings/clock/nrf-auxpll.h>
 #include <zephyr/dt-bindings/misc/nordic-nrf-ficr-nrf54h20.h>
 #include <zephyr/dt-bindings/misc/nordic-domain-id-nrf54h20.h>
 #include <zephyr/dt-bindings/misc/nordic-owner-id-nrf54h20.h>
@@ -225,8 +223,21 @@
 
 		audiopll: audiopll {
 			compatible = "nordic,nrfs-audiopll";
-			frequency = <NRFS_AUDIOPLL_FREQ_AUDIO_44K1>;
+			/* Output rate in Hz (also advertised to clock consumers; aclk carries none).
+			 * 11.2896 MHz is the 44.1 kHz audio family rate. Matches auxpll (nRF7120) and
+			 * hfclkaudio (nRF5340).
+			 */
+			clock-frequency = <11289600>;
 			status = "disabled";
+		};
+
+		aclk: aclk {
+			/*
+			 * Audio clock signal - a bindingless node that only identifies the ACLK
+			 * mux position for clock states (matched by node identity). Its rate is
+			 * owned by the state's producer (audiopll), so it carries no clock-frequency.
+			 */
+			#clock-cells = <0>;
 		};
 	};
 
@@ -733,7 +744,11 @@
 				clocks = <&hfxo>;
 				#clock-cells = <0>;
 				nordic,ficrs = <&ficr NRF_FICR_TRIM_GLOBAL_CANPLL_TRIM_CTUNE>;
-				nordic,frequency = <NRF_AUXPLL_FREQ_DIV_MIN>;
+				/* 80 MHz: with range "high" (R=5), out-div 2 and the 32 MHz HFXO
+				 * source this is the low edge of the producible band (divider A=0),
+				 * matching the former NRF_AUXPLL_FREQ_DIV_MIN token.
+				 */
+				clock-frequency = <DT_FREQ_M(80)>;
 				nordic,out-div = <2>;
 				nordic,out-drive = <0>;
 				nordic,current-tune = <6>;

@@ -92,8 +92,9 @@ LOG_MODULE_REGISTER(tdm_nrf, CONFIG_I2S_LOG_LEVEL);
  * from the selected state's signal/producer via NRF_PERIPH_GET_FREQUENCY_BY_IDX().
  */
 #if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(audiopll))
-#define NODE_ACLK      DT_NODELABEL(audiopll)
-#define ACLK_FREQUENCY DT_PROP_OR(NODE_ACLK, frequency, 0)
+#define NODE_ACLK DT_NODELABEL(audiopll)
+/* clock-frequency is the preferred rate; the deprecated frequency, when set, takes precedence. */
+#define ACLK_FREQUENCY DT_PROP_OR(NODE_ACLK, frequency, DT_PROP_OR(NODE_ACLK, clock_frequency, 0))
 #elif DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(audio_auxpll))
 #define NODE_AUDIO_AUXPLL DT_NODELABEL(audio_auxpll)
 /* Target output frequency of the AUXPLL (the driver rounds it to the nearest
