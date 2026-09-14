@@ -9,7 +9,6 @@
 #include <zephyr/audio/dmic.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <zephyr/drivers/pinctrl.h>
-#include <zephyr/dt-bindings/clock/nrf-auxpll.h>
 #include <soc.h>
 #include <dmm.h>
 #include <nrfx_pdm.h>
@@ -18,136 +17,24 @@
 #include <zephyr/irq.h>
 LOG_MODULE_REGISTER(dmic_nrfx_pdm, CONFIG_AUDIO_DMIC_LOG_LEVEL);
 
-#define NODE_AUDIO_AUXPLL DT_NODELABEL(audio_auxpll)
-
 /*
- * Clocking scheme is selected at build time, not per call. A node opts into the clock-state
- * model by pointing its `clocks` property at a nordic,clock-state; the two schemes are mutually
- * exclusive in a given build, so the state-specific code below is compiled in wholesale instead
- * of being chosen at runtime (mirrors UARTE_ANY_CLK in the UARTE shim). When set, the producer
- * to request is a compile-time constant taken from the state and lives in the const config;
- * otherwise the legacy path discovers it at runtime.
+ * The PDM node selects its clock through the nordic,clock-state referenced by its `clocks`
+ * property. Everything the driver needs is derived from that state at build time and stored in the
+ * const config: the mux position (clk_src), the producer device to request (clk_dev, NULL when the
+ * state names none) and the resulting signal frequency (clk_state_base_freq). The producer is
+ * requested and released through the nrf_clock_control API.
  */
-#define PDM_INST_IS_STATE(inst) +NRF_DT_CLK_IS_STATE_BY_IDX(DT_DRV_INST(inst), 0)
-#if (0 DT_INST_FOREACH_STATUS_OKAY(PDM_INST_IS_STATE)) > 0
-#define PDM_ANY_CLK 1
-#else
-#define PDM_ANY_CLK 0
-#endif
-
-#if !PDM_ANY_CLK
-/*
- * Legacy (pre-clock-state) audio-clock discovery. Everything in this block - the base-clock
- * frequency, the per-SoC/per-binding ACLK frequency, and the AUDIO_* helpers consumed by the
- * ACLK BUILD_ASSERTs - exists only for nodes that have NOT moved to the clock-state model. Once
- * every node uses nordic,clock-state this whole block (and the asserts that consume it) is
- * deleted; the state path derives all of it from the selected nordic,clock-state instead.
- */
-#define DMIC_NRFX_CLOCK_FREQ MHZ(32)
-
-#if defined(CONFIG_SOC_SERIES_NRF54H) || defined(CONFIG_SOC_SERIES_NRF92)
-#undef DMIC_NRFX_CLOCK_FREQ
-#define DMIC_NRFX_CLOCK_FREQ MHZ(16)
-/* clock-frequency is the preferred rate; the deprecated frequency, when set, takes precedence. */
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ                                                                  \
-	DT_PROP_OR(DT_NODELABEL(audiopll), frequency,                                              \
-		   DT_PROP_OR(DT_NODELABEL(audiopll), clock_frequency, 0))
-#define AUDIO_ASSERT_MSG                                                                           \
-	"Clock source ACLK requires clock-frequency (or the deprecated frequency) to be set in "  \
-	"the audiopll node."
-#define AUDIO_FREQUENCY_DEFINED                                                                    \
-	(DT_NODE_HAS_PROP(DT_NODELABEL(audiopll), frequency) ||                                    \
-	 DT_NODE_HAS_PROP(DT_NODELABEL(audiopll), clock_frequency))
-
-#elif DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-/* Target output frequency of the AUXPLL (the driver rounds it to the nearest
- * achievable divider); used as the audio base clock for the PDM ratio.
- */
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ DT_PROP_OR(NODE_AUDIO_AUXPLL, clock_frequency, 0)
-#define AUDIO_ASSERT_MSG                                                                           \
-	"Clock source ACLK requires the clock-frequency property to be set in the audio_auxpll "  \
-	"node."
-#define AUDIO_FREQUENCY_DEFINED DT_NODE_HAS_PROP(NODE_AUDIO_AUXPLL, clock_frequency)
-
-#elif CONFIG_CLOCK_CONTROL_NRF
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ                                                                 \
-	DT_PROP_OR(DT_NODELABEL(aclk), clock_frequency,                                            \
-		   DT_PROP_OR(DT_NODELABEL(clock), hfclkaudio_frequency, 0))
-#define AUDIO_ASSERT_MSG                                                                           \
-	"Clock source ACLK requires hfclkaudio_frequency property to be set in the clock node"     \
-	"or clock_frequency property to be set in the aclk node."
-#define AUDIO_FREQUENCY_DEFINED                                                                    \
-	(DT_NODE_HAS_PROP(DT_NODELABEL(clock), hfclkaudio_frequency) ||                            \
-	 DT_NODE_HAS_PROP(DT_NODELABEL(aclk), clock_frequency))
-
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_HFCLKAUDIO)
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ                                                                 \
-	DT_PROP_OR(DT_NODELABEL(aclk), clock_frequency,                                            \
-		   DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_hfclkaudio),          \
-			      clock_frequency,                                                     \
-			      DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(                             \
-						 nordic_nrf_clock_hfclkaudio),                       \
-					 hfclkaudio_frequency, 0)))
-#define AUDIO_ASSERT_MSG                                                                           \
-	"Clock source ACLK requires the clock-frequency property (or the deprecated "              \
-	"hfclkaudio-frequency) to be set in the hfclkaudio node."
-#define AUDIO_FREQUENCY_DEFINED                                                                    \
-	(DT_NODE_HAS_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_hfclkaudio),              \
-			  clock_frequency) ||                                                      \
-	 DT_NODE_HAS_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_hfclkaudio),              \
-			  hfclkaudio_frequency))
-
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_XO24M)
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ                                                                 \
-	DT_PROP_OR(DT_NODELABEL(aclk), clock_frequency,                                            \
-		   DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_xo24m),               \
-			      clock_frequency, 0))
-#define AUDIO_ASSERT_MSG                                                                           \
-	"Clock source ACLK requires clock_frequency property to be set in the xo24m node."
-#define AUDIO_FREQUENCY_DEFINED                                                                    \
-	DT_NODE_HAS_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_xo24m), clock_frequency)
-
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_XO)
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ                                                                 \
-	DT_PROP_OR(DT_NODELABEL(aclk), clock_frequency,                                            \
-		   DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_xo), clock_frequency, \
-			      0))
-#define AUDIO_ASSERT_MSG                                                                           \
-	"Clock source ACLK requires clock_frequency property to be set in the xo node."
-#define AUDIO_FREQUENCY_DEFINED                                                                    \
-	DT_NODE_HAS_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_xo), clock_frequency)
-
-#else
-#define DMIC_NRFX_AUDIO_CLOCK_FREQ 0
-#define AUDIO_ASSERT_MSG           "ACLK clock source not available use another clock source."
-#define AUDIO_FREQUENCY_DEFINED    0
-
-#endif
-#endif /* !PDM_ANY_CLK */
 
 struct dmic_nrfx_pdm_drv_data {
 	nrfx_pdm_t pdm;
-#if PDM_ANY_CLK
-	/* Producer is a compile-time constant in the config (see clk_dev there); nothing about the
+	/* Producer to request is a compile-time constant in the config (clk_dev); nothing about the
 	 * clock is kept in runtime data.
 	 */
-#elif CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL || DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-	const struct device *audiopll_dev;
-#elif CONFIG_CLOCK_CONTROL_NRF
-	struct onoff_manager *clk_mgr;
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_HFCLKAUDIO) || defined(CONFIG_CLOCK_CONTROL_NRF_HFCLK) ||   \
-	defined(CONFIG_CLOCK_CONTROL_NRF_XO) || defined(CONFIG_CLOCK_CONTROL_NRF_XO24M)
-	const struct device *clk_dev;
-#endif
 	struct onoff_client clk_cli;
 	struct k_mem_slab *mem_slab;
 	uint32_t block_size;
 	struct k_msgq mem_slab_queue;
 	struct k_msgq rx_queue;
-#if !PDM_ANY_CLK
-	/* Legacy path only: whether a producer has to be requested (state path uses clk_dev). */
-	bool request_clock : 1;
-#endif
 	bool configured    : 1;
 	volatile bool active;
 	volatile bool stopping;
@@ -159,18 +46,15 @@ struct dmic_nrfx_pdm_drv_cfg {
 	const struct pinctrl_dev_config *pcfg;
 	enum clock_source {
 		PCLK32M,
-		PCLK32M_HFXO,
 		ACLK
 	} clk_src;
-#if PDM_ANY_CLK
 	/*
-	 * Clock-state prototype: clk_src (the mux), clk_dev (producer to request, NULL for none)
-	 * and clk_state_base_freq (signal frequency) are all derived at build time from the
-	 * nordic,clock-state selected by the node's `clocks` property.
+	 * clk_src (the mux), clk_dev (producer to request, NULL for none) and clk_state_base_freq
+	 * (signal frequency) are all derived at build time from the nordic,clock-state selected by
+	 * the node's `clocks` property.
 	 */
 	const struct device *clk_dev;
 	uint32_t clk_state_base_freq;
-#endif
 	/* Per-instance completion handler, bound to the device at compile time (see the trampoline
 	 * in PDM_NRFX_DEVICE). It lets the shared clock-started logic reach the const config
 	 * without any runtime back-reference, while the driver still requests and releases the
@@ -195,56 +79,22 @@ static void stop_pdm(struct dmic_nrfx_pdm_drv_data *drv_data)
 static int request_clock(const struct device *dev)
 {
 	struct dmic_nrfx_pdm_drv_data *drv_data = dev->data;
-#if PDM_ANY_CLK
 	const struct dmic_nrfx_pdm_drv_cfg *drv_cfg = dev->config;
 
 	if (drv_cfg->clk_dev == NULL) {
 		return 0;
 	}
 	return nrf_clock_control_request(drv_cfg->clk_dev, NULL, &drv_data->clk_cli);
-#else
-	if (!drv_data->request_clock) {
-		return 0;
-	}
-#if CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL || DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-	return nrf_clock_control_request(drv_data->audiopll_dev, NULL, &drv_data->clk_cli);
-#elif CONFIG_CLOCK_CONTROL_NRF
-	return onoff_request(drv_data->clk_mgr, &drv_data->clk_cli);
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_HFCLKAUDIO) || defined(CONFIG_CLOCK_CONTROL_NRF_HFCLK) ||   \
-	defined(CONFIG_CLOCK_CONTROL_NRF_XO) || defined(CONFIG_CLOCK_CONTROL_NRF_XO24M)
-	return nrf_clock_control_request(drv_data->clk_dev, NULL, &drv_data->clk_cli);
-#else
-	return -ENOTSUP;
-#endif
-#endif /* PDM_ANY_CLK */
 }
 
 static int release_clock(const struct device *dev)
 {
-#if PDM_ANY_CLK
 	const struct dmic_nrfx_pdm_drv_cfg *drv_cfg = dev->config;
 
 	if (drv_cfg->clk_dev == NULL) {
 		return 0;
 	}
 	return nrf_clock_control_release(drv_cfg->clk_dev, NULL);
-#else
-	struct dmic_nrfx_pdm_drv_data *drv_data = dev->data;
-
-	if (!drv_data->request_clock) {
-		return 0;
-	}
-#if CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL || DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-	return nrf_clock_control_release(drv_data->audiopll_dev, NULL);
-#elif CONFIG_CLOCK_CONTROL_NRF
-	return onoff_release(drv_data->clk_mgr);
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_HFCLKAUDIO) || defined(CONFIG_CLOCK_CONTROL_NRF_HFCLK) ||   \
-	defined(CONFIG_CLOCK_CONTROL_NRF_XO) || defined(CONFIG_CLOCK_CONTROL_NRF_XO24M)
-	return nrf_clock_control_release(drv_data->clk_dev, NULL);
-#else
-	return -ENOTSUP;
-#endif
-#endif /* PDM_ANY_CLK */
 }
 
 static void event_handler(const struct device *dev, const nrfx_pdm_evt_t *evt)
@@ -436,13 +286,7 @@ static int dmic_nrfx_pdm_configure(const struct device *dev,
 			 : NRF_PDM_MCLKSRC_PCLK32M;
 #endif
 	nrfx_pdm_output_t output_config = {
-#if PDM_ANY_CLK
 		.base_clock_freq = drv_cfg->clk_state_base_freq,
-#else
-		.base_clock_freq = (NRF_PDM_HAS_SELECTABLE_CLOCK && drv_cfg->clk_src == ACLK)
-					   ? DMIC_NRFX_AUDIO_CLOCK_FREQ
-					   : DMIC_NRFX_CLOCK_FREQ,
-#endif
 		.sampling_rate = config->streams[0].pcm_rate,
 		.output_freq_min = config->io.min_pdm_clk_freq,
 		.output_freq_max = config->io.max_pdm_clk_freq
@@ -467,18 +311,6 @@ static int dmic_nrfx_pdm_configure(const struct device *dev,
 	drv_data->block_size = stream->block_size;
 	drv_data->mem_slab   = stream->mem_slab;
 
-	/* Unless the PCLK32M source is used with the HFINT oscillator
-	 * (which is always available without any additional actions),
-	 * it is required to request the proper clock to be running
-	 * before starting the transfer itself.
-	 */
-#if !PDM_ANY_CLK
-	drv_data->request_clock =
-		(drv_cfg->clk_src != PCLK32M && (IS_ENABLED(CONFIG_CLOCK_CONTROL_NRF) ||
-						 (IS_ENABLED(CONFIG_CLOCK_CONTROL_NRF_COMMON) &&
-						  !(IS_ENABLED(CONFIG_SOC_SERIES_NRF54H) ||
-						    IS_ENABLED(CONFIG_SOC_SERIES_NRF92)))));
-#endif
 	drv_data->configured = true;
 	return 0;
 }
@@ -534,11 +366,7 @@ static int trigger_start(const struct device *dev)
 	/* If it is required to use certain HF clock, request it to be running
 	 * first. If not, start the transfer directly.
 	 */
-#if PDM_ANY_CLK
 	if (drv_cfg->clk_dev != NULL) {
-#else
-	if (drv_data->request_clock) {
-#endif
 		sys_notify_init_callback(&drv_data->clk_cli.notify, drv_cfg->clk_started_cb);
 		ret = request_clock(dev);
 		if (ret < 0) {
@@ -616,71 +444,13 @@ static int dmic_nrfx_pdm_read(const struct device *dev,
 	return ret;
 }
 
-static void init_clock_manager(const struct device *dev)
-{
-#if PDM_ANY_CLK
-	/* The selected clock state names the producer (if any) directly in the config, so there is
-	 * no backend discovery to do and nothing to record in runtime data.
-	 */
-	ARG_UNUSED(dev);
-#elif DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-	struct dmic_nrfx_pdm_drv_data *drv_data = dev->data;
-	drv_data->audiopll_dev = DEVICE_DT_GET(NODE_AUDIO_AUXPLL);
-#elif CONFIG_CLOCK_CONTROL_NRF
-	clock_control_subsys_t subsys;
-	struct dmic_nrfx_pdm_drv_data *drv_data = dev->data;
-#if NRF_CLOCK_HAS_HFCLKAUDIO || NRF_CLOCK_HAS_HFCLK24M
-	const struct dmic_nrfx_pdm_drv_cfg *drv_cfg = dev->config;
-
-	if (drv_cfg->clk_src == ACLK) {
-		subsys = COND_CODE_1(NRF_CLOCK_HAS_HFCLK24M, (CLOCK_CONTROL_NRF_SUBSYS_HF24M),
-			(CLOCK_CONTROL_NRF_SUBSYS_HFAUDIO));
-	} else {
-		subsys = CLOCK_CONTROL_NRF_SUBSYS_HF;
-	}
-#else
-	subsys = CLOCK_CONTROL_NRF_SUBSYS_HF;
-#endif
-
-	drv_data->clk_mgr = z_nrf_clock_control_get_onoff(subsys);
-	__ASSERT_NO_MSG(drv_data->clk_mgr != NULL);
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_HFCLKAUDIO) || defined(CONFIG_CLOCK_CONTROL_NRF_HFCLK) ||   \
-	defined(CONFIG_CLOCK_CONTROL_NRF_XO) || defined(CONFIG_CLOCK_CONTROL_NRF_XO24M)
-	struct dmic_nrfx_pdm_drv_data *drv_data = dev->data;
-#if NRF_CLOCK_HAS_HFCLKAUDIO || NRF_CLOCK_HAS_HFCLK24M
-	const struct dmic_nrfx_pdm_drv_cfg *drv_cfg = dev->config;
-
-	if (drv_cfg->clk_src == ACLK) {
-		drv_data->clk_dev = DEVICE_DT_GET_ONE(
-			COND_CODE_1(NRF_CLOCK_HAS_HFCLK24M,
-			(nordic_nrf_clock_xo24m), (nordic_nrf_clock_hfclkaudio)));
-	} else {
-		drv_data->clk_dev = DEVICE_DT_GET_ONE(
-			COND_CODE_1(NRF_CLOCK_HAS_HFCLK,
-			(nordic_nrf_clock_hfclk), (nordic_nrf_clock_xo)));
-	}
-#else
-	drv_data->clk_dev = DEVICE_DT_GET_ONE(
-		COND_CODE_1(NRF_CLOCK_HAS_HFCLK, (nordic_nrf_clock_hfclk), (nordic_nrf_clock_xo)));
-#endif
-
-	__ASSERT_NO_MSG(drv_data->clk_dev != NULL);
-#elif CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL
-	struct dmic_nrfx_pdm_drv_data *drv_data = dev->data;
-
-	drv_data->audiopll_dev = DEVICE_DT_GET(DT_NODELABEL(audiopll));
-#endif
-}
-
 static DEVICE_API(dmic, dmic_ops) = {
 	.configure = dmic_nrfx_pdm_configure,
 	.trigger = dmic_nrfx_pdm_trigger,
 	.read = dmic_nrfx_pdm_read,
 };
 
-#define PDM_CLK_SRC(inst) DT_STRING_TOKEN(DT_DRV_INST(inst), clock_source)
-
-/* Clock-state prototype helpers. A node opts in by pointing `clocks` at a nordic,clock-state. */
+/* Clock-state helpers. The node's `clocks` property points at the nordic,clock-state to use. */
 #if DT_NODE_EXISTS(DT_NODELABEL(aclk))
 #define PDM_ACLK_NODE DT_NODELABEL(aclk)
 #else
@@ -699,25 +469,9 @@ static DEVICE_API(dmic, dmic_ops) = {
 		    (NRF_DT_CLK_DEV_BY_IDX(DT_DRV_INST(inst), 0)), (NULL))
 
 #define PDM_CLK_CFG_FIELDS(inst)                                                                   \
-	COND_CODE_1(PDM_ANY_CLK,                                                                    \
-		    (.clk_src = PDM_STATE_MUX(inst),                                                \
-		     .clk_dev = PDM_STATE_DEV(inst),                                                \
-		     .clk_state_base_freq = NRF_PERIPH_GET_FREQUENCY_BY_IDX(DT_DRV_INST(inst), 0),),\
-		    (.clk_src = PDM_CLK_SRC(inst),))
-
-#if !PDM_ANY_CLK
-/*
- * Legacy ACLK sanity checks. They rely on the legacy clock_source token and the AUDIO_* helpers
- * defined at the top of the file, so they are compiled only on the pre-clock-state path and are
- * removed together with that block once every node uses nordic,clock-state.
- */
-#define PDM_LEGACY_ACLK_ASSERTS(inst)                                                              \
-	BUILD_ASSERT(PDM_CLK_SRC(inst) != ACLK || NRF_PDM_HAS_SELECTABLE_CLOCK,                    \
-		     "Clock source ACLK is not available.");                                       \
-	BUILD_ASSERT(PDM_CLK_SRC(inst) != ACLK || AUDIO_FREQUENCY_DEFINED, AUDIO_ASSERT_MSG);
-#else
-#define PDM_LEGACY_ACLK_ASSERTS(inst)
-#endif
+	.clk_src = PDM_STATE_MUX(inst),                                                             \
+	.clk_dev = PDM_STATE_DEV(inst),                                                             \
+	.clk_state_base_freq = NRF_PERIPH_GET_FREQUENCY_BY_IDX(DT_DRV_INST(inst), 0),
 
 #define PDM_NRFX_DEVICE(inst)                                                                      \
 	static void *rx_msgs##inst[DT_INST_PROP(inst, queue_size)];                                \
@@ -738,7 +492,6 @@ static DEVICE_API(dmic, dmic_ops) = {
 			    sizeof(void *), ARRAY_SIZE(rx_msgs##inst));                            \
 		k_msgq_init(&dmic_nrfx_pdm_data##inst.mem_slab_queue, (char *)mem_slab_msgs##inst, \
 			    sizeof(void *), ARRAY_SIZE(mem_slab_msgs##inst));                      \
-		init_clock_manager(dev);                                                           \
 		return 0;                                                                          \
 	}                                                                                          \
 	static void event_handler##inst(const nrfx_pdm_evt_t *evt)                                 \
@@ -766,7 +519,6 @@ static DEVICE_API(dmic, dmic_ops) = {
 		.mem_reg = DMM_DEV_TO_REG(DT_DRV_INST(inst)),                                      \
 	};                                                                                         \
 	NRF_DT_CHECK_NODE_HAS_REQUIRED_MEMORY_REGIONS(DT_DRV_INST(inst));                          \
-	PDM_LEGACY_ACLK_ASSERTS(inst)                                                              \
 	DEVICE_DT_INST_DEFINE(inst, pdm_nrfx_init##inst, NULL, &dmic_nrfx_pdm_data##inst,          \
 			      &dmic_nrfx_pdm_cfg##inst, POST_KERNEL,                               \
 			      CONFIG_AUDIO_DMIC_INIT_PRIORITY, &dmic_ops);
