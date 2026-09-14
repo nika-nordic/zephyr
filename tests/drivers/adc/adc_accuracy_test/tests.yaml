@@ -79,3 +79,123 @@ tests:
     integration_platforms:
       - frdm_kl25z
       - nrf54l15dk/nrf54l15/cpuapp
+
+  # SAADC clock-management coverage (build-only). The SAADC selects a clock state through its
+  # `clocks` property: pclk16m_hfint has no producer (no clock action), while pclk16m_hfxo names
+  # the HFXO as a producer that the driver requests. The hfxo producer is SoC-specific (HFCLK on
+  # nRF5340, the xo node on nRF54L/nRF7120, fll16m with an accuracy spec on nRF54H20), so each SoC
+  # uses its own overlay; the (producer-less) hfint overlay is shared. A global EXTRA_DTC_OVERLAY_-
+  # FILE is used rather than a platform-prefixed one so it applies regardless of board revision.
+  #
+  # pclk16m_hfint - no producer, no clock action; shared overlay across all four SoCs.
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfint:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+      - nrf54l15dk/nrf54l15/cpuapp
+      - nrf54h20dk/nrf54h20/cpuapp
+      - nrf7120dk/nrf7120/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/adc_pclk16m_hfint.overlay"
+    integration_platforms:
+      - nrf54l15dk/nrf54l15/cpuapp
+
+  # pclk16m_hfxo - producer requested, default ON_INIT scheme; one scenario per SoC.
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo.nrf5340:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_nrf5340_cpuapp_pclk16m_hfxo.overlay"
+
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo.nrf54l15:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_nrf54l15_cpuapp_pclk16m_hfxo.overlay"
+
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo.nrf54h20:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+      - CONFIG_CLOCK_CONTROL=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_nrf54h20_cpuapp_pclk16m_hfxo.overlay"
+
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo.nrf7120:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf7120dk/nrf7120/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf7120dk_nrf7120_cpuapp_pclk16m_hfxo.overlay"
+
+  # ON_PM scheme (producer requested on resume, released on suspend). Exercised on nRF54H20 (which
+  # also carries an accuracy spec) and nRF54L15 (no spec).
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo_on_pm.nrf54h20:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+      - CONFIG_CLOCK_CONTROL=y
+      - CONFIG_PM_DEVICE=y
+      - CONFIG_PM_DEVICE_RUNTIME=y
+      - CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_PM=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_nrf54h20_cpuapp_pclk16m_hfxo.overlay"
+
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo_on_pm.nrf54l15:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+      - CONFIG_PM_DEVICE=y
+      - CONFIG_PM_DEVICE_RUNTIME=y
+      - CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_PM=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_nrf54l15_cpuapp_pclk16m_hfxo.overlay"
+
+  # ON_ACTIVE scheme (producer requested around each conversion). Same two representative SoCs.
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo_on_active.nrf54h20:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+      - CONFIG_CLOCK_CONTROL=y
+      - CONFIG_ADC_ASYNC=y
+      - CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf54h20dk/nrf54h20/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54h20dk_nrf54h20_cpuapp_pclk16m_hfxo.overlay"
+
+  drivers.adc.accuracy.clock_mgmt.pclk16m_hfxo_on_active.nrf54l15:
+    build_only: true
+    extra_configs:
+      - CONFIG_REFERENCE_VOLTAGE_TEST=y
+      - CONFIG_ADC_ASYNC=y
+      - CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE=y
+    filter: CONFIG_REFERENCE_VOLTAGE_TEST
+    platform_allow:
+      - nrf54l15dk/nrf54l15/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54l15dk_nrf54l15_cpuapp_pclk16m_hfxo.overlay"

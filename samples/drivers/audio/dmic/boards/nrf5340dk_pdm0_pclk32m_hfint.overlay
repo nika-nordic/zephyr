@@ -1,0 +1,9 @@
+/*
+ * PDM clock-state case: pdm0 on the 32 MHz peripheral clock from the internal oscillator.
+ *
+ * Applied on top of the board overlay (which enables pdm0/dmic_dev and its pinctrl). The
+ * pclk32m_hfint state maps to the PCLK32M mux and names no producer, so no runtime request.
+ */
+&pdm0 {
+	clocks = <&pclk32m_hfint>;
+};

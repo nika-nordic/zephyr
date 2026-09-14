@@ -261,22 +261,187 @@
 
 /** @brief Get clock frequency that is used for the given node.
  *
- * Macro checks if node has clock property and if yes then if clock has clock_frequency property
- * then it is returned. If it has supported_clock_frequency property with the list of supported
- * frequencies then the last one is returned with assumption that they are ordered and the last
- * one is the highest. If node does not have clock then 16 MHz is returned which is the default
- * frequency.
+ * Macro checks if node has clock property and if yes then if the referenced node is a clock
+ * state (nordic,clock-state) then the frequency of the output that the state is clocked by
+ * is returned; if that output carries no clock_frequency, the rate owned by the state's
+ * producer is returned instead. Otherwise, if the clock has clock_frequency property then it
+ * is returned. If
+ * it has supported_clock_frequency property with the list of supported frequencies then the
+ * last one is returned with assumption that they are ordered and the last one is the highest.
+ * If node does not have clock then 16 MHz is returned which is the default frequency.
  *
  * @param node Devicetree node.
  *
  * @return Frequency of the clock that is used for the node.
  */
-#define NRF_PERIPH_GET_FREQUENCY(node) \
-	COND_CODE_1(DT_CLOCKS_HAS_IDX(node, 0),							\
-		(COND_CODE_1(DT_NODE_HAS_PROP(DT_CLOCKS_CTLR(node), clock_frequency),		\
-			     (DT_PROP(DT_CLOCKS_CTLR(node), clock_frequency)),			\
-			     (DT_PROP_LAST(DT_CLOCKS_CTLR(node), supported_clock_frequency)))),	\
+/* Rate the producer resolves to for a state: the operating point requested via
+ * producer-frequency-hz when given, otherwise the producer's own clock-frequency. Used for
+ * rate-less outputs (audio "aclk", whose PLL producer defines the rate) and for producer-only
+ * states with no output (a DVFS generator such as hsfll120 that clocks the peripheral directly,
+ * where the peripheral runs at the requested operating point).
+ */
+#define NRF_CLK_STATE_PRODUCER_FREQ(state)						\
+	DT_PROP_OR(state, producer_frequency_hz,					\
+		   DT_PROP(DT_PHANDLE(state, clock_producer), clock_frequency))
+
+/* Frequency of a clock state (nordic,clock-state): the output's clock-frequency when the output
+ * pins a rate, otherwise the rate resolved from the producer (NRF_CLK_STATE_PRODUCER_FREQ). The
+ * output always takes precedence, so a producer's own oscillator rate (e.g. a 32 MHz HFXO
+ * producer feeding a 16 MHz PCLK output) can never override the real peripheral base frequency;
+ * the producer is consulted only for rate-less outputs (audio "aclk") and output-less states.
+ */
+#define NRF_CLK_STATE_FREQ(state)							\
+	COND_CODE_1(DT_NODE_HAS_PROP(state, clock_output),				\
+		(COND_CODE_1(DT_NODE_HAS_PROP(DT_PHANDLE(state, clock_output),		\
+					      clock_frequency),				\
+			(DT_PROP(DT_PHANDLE(state, clock_output), clock_frequency)),	\
+			(NRF_CLK_STATE_PRODUCER_FREQ(state)))),				\
+		(NRF_CLK_STATE_PRODUCER_FREQ(state)))
+
+#define NRF_PERIPH_GET_FREQUENCY_BY_IDX(node, idx) \
+	COND_CODE_1(DT_CLOCKS_HAS_IDX(node, idx),						\
+		(COND_CODE_1(NRF_DT_CLK_IS_STATE_BY_IDX(node, idx),				\
+		    (NRF_CLK_STATE_FREQ(DT_CLOCKS_CTLR_BY_IDX(node, idx))),			\
+		    (COND_CODE_1(DT_NODE_HAS_PROP(DT_CLOCKS_CTLR_BY_IDX(node, idx),		\
+						  clock_frequency),				\
+			     (DT_PROP(DT_CLOCKS_CTLR_BY_IDX(node, idx), clock_frequency)),	\
+			     (DT_PROP_LAST(DT_CLOCKS_CTLR_BY_IDX(node, idx),			\
+					   supported_clock_frequency)))))),			\
 		(NRFX_MHZ_TO_HZ(16)))
+
+#define NRF_PERIPH_GET_FREQUENCY(node) NRF_PERIPH_GET_FREQUENCY_BY_IDX(node, 0)
+
+/*
+ * Clock consumer helpers.
+ *
+ * The `clocks` property of a peripheral (clock consumer) node references a clock state
+ * (nordic,clock-state) that the SoC defines, for example `<&pclk16m_hfxo>`. The state names the
+ * output that gives the frequency the peripheral is clocked at, which is never acted upon and is
+ * read with NRF_PERIPH_GET_FREQUENCY(), and/or a producer that has to be running for that state
+ * (a producer-only state with no output takes its frequency from the producer instead). Selecting
+ * a state whose producer is present means that the
+ * peripheral driver is expected to request it, so that the peripheral runs off it instead of
+ * the clock that the hardware requests automatically; selecting a state without a producer
+ * means that no runtime action is taken.
+ */
+
+/** @brief Check whether the node selects a clock state with a producer to be requested.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_PRESENT(node) NRF_DT_CLK_PRESENT_BY_IDX(node, 0)
+
+/** @brief Get the clock producer device of the clock state selected by the node.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_DEV(node) NRF_DT_CLK_DEV_BY_IDX(node, 0)
+
+/** @brief Check whether the node selects a clock state (nordic,clock-state) at the given index.
+ *
+ * Distinguishes the clock-state model from the legacy use of `clocks` for frequency lookup: a
+ * clock state exposes a `clock-output` and/or a `clock-producer` (a producer-only state has no
+ * output, e.g. a DVFS generator that clocks the peripheral directly); a plain clock provider
+ * referenced directly exposes neither.
+ *
+ * @param node Devicetree node of the clock consumer.
+ * @param idx  Index into the `clocks` phandle array.
+ */
+#define NRF_DT_CLK_IS_STATE_BY_IDX(node, idx)						\
+	UTIL_AND(DT_CLOCKS_HAS_IDX(node, idx),						\
+		 UTIL_OR(DT_NODE_HAS_PROP(DT_CLOCKS_CTLR_BY_IDX(node, idx), clock_output),\
+			 DT_NODE_HAS_PROP(DT_CLOCKS_CTLR_BY_IDX(node, idx), clock_producer)))
+
+/** @brief Get the clock-output node of the clock state selected at the given index.
+ *
+ * The output identifies both the frequency (see NRF_PERIPH_GET_FREQUENCY_BY_IDX) and, for
+ * drivers with a hardware clock mux, which mux position the state maps to (compared with
+ * DT_SAME_NODE against the SoC output nodes).
+ *
+ * @param node Devicetree node of the clock consumer.
+ * @param idx  Index into the `clocks` phandle array.
+ */
+#define NRF_DT_CLK_OUTPUT_BY_IDX(node, idx) \
+	DT_PHANDLE(DT_CLOCKS_CTLR_BY_IDX(node, idx), clock_output)
+
+/** @brief Check whether the clock state selected at the given index has a producer to request.
+ *
+ * @param node Devicetree node of the clock consumer.
+ * @param idx  Index into the `clocks` phandle array.
+ */
+#define NRF_DT_CLK_PRESENT_BY_IDX(node, idx)					\
+	UTIL_AND(DT_CLOCKS_HAS_IDX(node, idx),					\
+		 DT_NODE_HAS_PROP(DT_CLOCKS_CTLR_BY_IDX(node, idx), clock_producer))
+
+/** @brief Get the clock producer device of the clock state selected at the given index.
+ *
+ * @param node Devicetree node of the clock consumer.
+ * @param idx  Index into the `clocks` phandle array.
+ */
+#define NRF_DT_CLK_DEV_BY_IDX(node, idx) \
+	DEVICE_DT_GET(DT_PHANDLE(DT_CLOCKS_CTLR_BY_IDX(node, idx), clock_producer))
+
+/** @brief Check whether a clock state carries a producer spec, expands to 1 or 0.
+ *
+ * A producer spec is any of the producer-frequency-hz / producer-accuracy-ppm /
+ * producer-precision properties on the state node. When none are present the producer is
+ * requested with a NULL nrf_clock_spec (every attribute unconstrained).
+ *
+ * @param state Devicetree node of the clock state (nordic,clock-state).
+ */
+#define NRF_CLK_STATE_HAS_SPEC(state)						\
+	UTIL_OR(DT_NODE_HAS_PROP(state, producer_frequency_hz),			\
+		UTIL_OR(DT_NODE_HAS_PROP(state, producer_accuracy_ppm),		\
+			DT_NODE_HAS_PROP(state, producer_precision)))
+
+/** @brief nrf_clock_spec initializer for a clock state, from its producer-* properties.
+ *
+ * Yields a designated initializer usable to define a `struct nrf_clock_spec`. The frequency
+ * field defaults to the frequency the peripheral runs at in this state (NRF_CLK_STATE_FREQ,
+ * i.e. the output's clock-frequency, or the producer's if the output has none) unless the
+ * state overrides it with producer-frequency-hz; this both matches what the peripheral needs
+ * and tells frequency-selectable (DVFS) producers which operating point to request. The
+ * accuracy and precision fields default to 0 (don't care / default). The caller owns the
+ * struct definition and the include of <zephyr/drivers/clock_control/nrf_clock_control.h>.
+ *
+ * @param state Devicetree node of the clock state (nordic,clock-state).
+ */
+#define NRF_CLK_STATE_SPEC(state)						\
+	{									\
+		.frequency = DT_PROP_OR(state, producer_frequency_hz,		\
+					NRF_CLK_STATE_FREQ(state)),		\
+		.accuracy = DT_PROP_OR(state, producer_accuracy_ppm, 0),	\
+		.precision = DT_PROP_OR(state, producer_precision, 0),		\
+	}
+
+/** @brief Check whether the clock state selected at the given index carries a producer spec.
+ *
+ * @param node Devicetree node of the clock consumer.
+ * @param idx  Index into the `clocks` phandle array.
+ */
+#define NRF_DT_CLK_HAS_SPEC_BY_IDX(node, idx)					\
+	UTIL_AND(NRF_DT_CLK_PRESENT_BY_IDX(node, idx),				\
+		 NRF_CLK_STATE_HAS_SPEC(DT_CLOCKS_CTLR_BY_IDX(node, idx)))
+
+/** @brief nrf_clock_spec initializer for the clock state selected at the given index.
+ *
+ * @param node Devicetree node of the clock consumer.
+ * @param idx  Index into the `clocks` phandle array.
+ */
+#define NRF_DT_CLK_SPEC_BY_IDX(node, idx) \
+	NRF_CLK_STATE_SPEC(DT_CLOCKS_CTLR_BY_IDX(node, idx))
+
+/** @brief Check whether the clock state selected by the node carries a producer spec.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_HAS_SPEC(node) NRF_DT_CLK_HAS_SPEC_BY_IDX(node, 0)
+
+/** @brief nrf_clock_spec initializer for the clock state selected by the node.
+ *
+ * @param node Devicetree node of the clock consumer.
+ */
+#define NRF_DT_CLK_SPEC(node) NRF_DT_CLK_SPEC_BY_IDX(node, 0)
 
 /**
  * @brief Utility macro to check if instance is fast by node, expands to 1 or 0.

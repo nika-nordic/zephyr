@@ -18,15 +18,13 @@
 #include <zephyr/irq.h>
 LOG_MODULE_REGISTER(i2s_nrfx, CONFIG_I2S_LOG_LEVEL);
 
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-#define HFCLKAUDIO_FREQUENCY_PRESENT DT_NODE_HAS_PROP(DT_NODELABEL(clock), hfclkaudio_frequency)
-#elif defined(CONFIG_CLOCK_CONTROL_NRF_HFCLKAUDIO)
-#define HFCLKAUDIO_FREQUENCY_PRESENT                                                               \
-	DT_NODE_HAS_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_hfclkaudio),              \
-			 hfclkaudio_frequency)
-#else
-#define HFCLKAUDIO_FREQUENCY_PRESENT 0
-#endif
+/*
+ * The I2S node selects its clock through the nordic,clock-state referenced by its `clocks`
+ * property. Everything the driver needs is derived from that state at build time and stored in the
+ * const config: the mux position (clk_src), the producer device to request (clk_dev, NULL when the
+ * state names none) and the signal frequency (clk_state_base_freq, used to size the master-clock
+ * prescalers). The producer is requested and released through the nrf_clock_control API.
+ */
 
 struct stream_cfg {
 	struct i2s_config cfg;
@@ -39,11 +37,9 @@ struct i2s_buf {
 };
 
 struct i2s_nrfx_drv_data {
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-	struct onoff_manager *clk_mgr;
-#else
-	const struct device *clk_dev;
-#endif
+	/* Producer to request is a compile-time constant in the config (clk_dev); nothing about the
+	 * clock is kept in runtime data.
+	 */
 	struct onoff_client clk_cli;
 	struct stream_cfg tx;
 	struct k_msgq tx_queue;
@@ -67,9 +63,22 @@ struct i2s_nrfx_drv_cfg {
 	const struct pinctrl_dev_config *pcfg;
 	enum clock_source {
 		PCLK32M,
-		PCLK32M_HFXO,
 		ACLK
 	} clk_src;
+	/*
+	 * clk_src (the mux, inferred from the signal identity), clk_dev (producer to request, NULL
+	 * when the state names none) and clk_state_base_freq (the signal frequency, used to size the
+	 * master-clock prescalers) are all derived at build time from the nordic,clock-state selected
+	 * by the node's `clocks` property.
+	 */
+	const struct device *clk_dev;
+	uint32_t clk_state_base_freq;
+	/* Per-instance completion handler, bound to the device at compile time (see the trampoline
+	 * in I2S_NRFX_DEVICE). It lets the shared clock-started logic reach the const config
+	 * without any runtime back-reference, while the driver still requests and releases the
+	 * producer exclusively through the nrf_clock_control API.
+	 */
+	onoff_client_callback clk_started_cb;
 };
 
 /* Finds the clock settings that give the frame clock frequency closest to
@@ -79,32 +88,10 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 				nrfx_i2s_config_t *config,
 				const struct i2s_config *i2s_cfg)
 {
+	/* Base frequency comes from the selected clock state's signal. */
+	const uint32_t base_clock_freq = drv_cfg->clk_state_base_freq;
 	const nrfx_i2s_clk_params_t clk_params = {
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-		.base_clock_freq =
-			(NRF_I2S_HAS_CLKCONFIG && drv_cfg->clk_src == ACLK)
-			/* The I2S_NRFX_DEVICE() macro contains build assertions that
-			 * make sure that the ACLK clock source is only used when it is
-			 * available and only with the "hfclkaudio-frequency" property
-			 * defined, but the default value of 0 here needs to be used to
-			 * prevent compilation errors when the property is not defined
-			 * (this expression will be eventually optimized away then).
-			 */
-			? DT_PROP_OR(DT_NODELABEL(clock), hfclkaudio_frequency, 0)
-			: 32*1000*1000UL,
-#else
-		.base_clock_freq =
-			(NRF_I2S_HAS_CLKCONFIG && drv_cfg->clk_src == ACLK)
-			/* The I2S_NRFX_DEVICE() macro contains build assertions that
-			 * make sure that the ACLK clock source is only used when it is
-			 * available and only with the "hfclkaudio-frequency" property
-			 * defined, but the default value of 0 here needs to be used to
-			 * prevent compilation errors when the property is not defined
-			 * (this expression will be eventually optimized away then).
-			 */
-			? DT_PROP_OR(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_hfclkaudio),
-			hfclkaudio_frequency, 0) : 32*1000*1000UL,
-#endif
+		.base_clock_freq = base_clock_freq,
 		.transfer_rate = i2s_cfg->frame_clk_freq,
 		.swidth = config->sample_width,
 		.allow_bypass = IS_ENABLED(CONFIG_I2S_NRFX_ALLOW_MCK_BYPASS),
@@ -113,6 +100,34 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 	if (nrfx_i2s_prescalers_calc(&clk_params, &config->prescalers) != 0) {
 		LOG_ERR("Failed to find suitable I2S clock configuration.");
 	}
+}
+
+/* Whether a producer has to be requested is a runtime decision (it depends on the I2S
+ * configuration - the master-clock generator is only needed in Master mode or when the MCK
+ * output is used), so it stays in drv_data->request_clock. Which producer to act upon is fixed
+ * per build: the clock-state names it in the const config. The producer is requested and released
+ * through the nrf_clock_control API.
+ */
+static int request_clock(const struct device *dev)
+{
+	struct i2s_nrfx_drv_data *drv_data = dev->data;
+
+	if (!drv_data->request_clock) {
+		return 0;
+	}
+	return nrf_clock_control_request(((const struct i2s_nrfx_drv_cfg *)dev->config)->clk_dev,
+					 NULL, &drv_data->clk_cli);
+}
+
+static void release_clock(const struct device *dev)
+{
+	struct i2s_nrfx_drv_data *drv_data = dev->data;
+
+	if (!drv_data->request_clock) {
+		return;
+	}
+	(void)nrf_clock_control_release(((const struct i2s_nrfx_drv_cfg *)dev->config)->clk_dev,
+					NULL);
 }
 
 static bool get_next_tx_buffer(struct i2s_nrfx_drv_data *drv_data,
@@ -211,13 +226,7 @@ static void data_handler(const struct device *dev,
 			drv_data->last_tx_buffer = NULL;
 		}
 		nrfx_i2s_uninit(&drv_data->i2s);
-		if (drv_data->request_clock) {
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-			(void)onoff_release(drv_data->clk_mgr);
-#else
-			(void)nrf_clock_control_release(drv_data->clk_dev, NULL);
-#endif
-		}
+		release_clock(dev);
 	}
 
 	if (released == NULL) {
@@ -459,7 +468,7 @@ static int i2s_nrfx_configure(const struct device *dev, enum i2s_dir dir,
 		 * it is required to request the proper clock to be running
 		 * before starting the transfer itself.
 		 */
-		drv_data->request_clock = (drv_cfg->clk_src != PCLK32M);
+		drv_data->request_clock = (drv_cfg->clk_dev != NULL);
 	} else {
 		nrfx_cfg.prescalers.mck_setup = NRF_I2S_MCK_DISABLED;
 		drv_data->request_clock = false;
@@ -596,8 +605,9 @@ static int i2s_nrfx_write(const struct device *dev,
 	return 0;
 }
 
-static int start_transfer(struct i2s_nrfx_drv_data *drv_data)
+static int start_transfer(const struct device *dev)
 {
+	struct i2s_nrfx_drv_data *drv_data = dev->data;
 	nrfx_i2s_buffers_t initial_buffers = { 0 };
 	int ret;
 
@@ -633,13 +643,7 @@ static int start_transfer(struct i2s_nrfx_drv_data *drv_data)
 	}
 
 	nrfx_i2s_uninit(&drv_data->i2s);
-	if (drv_data->request_clock) {
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-		(void)onoff_release(drv_data->clk_mgr);
-#else
-		(void)nrf_clock_control_release(drv_data->clk_dev, NULL);
-#endif
-	}
+	release_clock(dev);
 
 	if (initial_buffers.p_tx_buffer) {
 		free_tx_buffer(drv_data, initial_buffers.p_tx_buffer);
@@ -652,27 +656,19 @@ static int start_transfer(struct i2s_nrfx_drv_data *drv_data)
 	return ret;
 }
 
-static void clock_started_callback(struct onoff_manager *mgr,
-				   struct onoff_client *cli,
-				   uint32_t state,
-				   int res)
+static void clock_started(const struct device *dev)
 {
-	struct i2s_nrfx_drv_data *drv_data =
-		CONTAINER_OF(cli, struct i2s_nrfx_drv_data, clk_cli);
+	struct i2s_nrfx_drv_data *drv_data = dev->data;
 
 	/* The driver state can be set back to READY at this point if the DROP
 	 * command was triggered before the clock has started. Do not start
-	 * the actual transfer in such case.
+	 * the actual transfer in such case, just release the clock.
 	 */
 	if (drv_data->state == I2S_STATE_READY) {
 		nrfx_i2s_uninit(&drv_data->i2s);
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-		(void)onoff_release(drv_data->clk_mgr);
-#else
-		(void)nrf_clock_control_release(drv_data->clk_dev, NULL);
-#endif
+		release_clock(dev);
 	} else {
-		(void)start_transfer(drv_data);
+		(void)start_transfer(dev);
 	}
 }
 
@@ -705,13 +701,8 @@ static int trigger_start(const struct device *dev)
 	 * first. If not, start the transfer directly.
 	 */
 	if (drv_data->request_clock) {
-		sys_notify_init_callback(&drv_data->clk_cli.notify,
-					 clock_started_callback);
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-		ret = onoff_request(drv_data->clk_mgr, &drv_data->clk_cli);
-#else
-		ret = nrf_clock_control_request(drv_data->clk_dev, NULL, &drv_data->clk_cli);
-#endif
+		sys_notify_init_callback(&drv_data->clk_cli.notify, drv_cfg->clk_started_cb);
+		ret = request_clock(dev);
 		if (ret < 0) {
 			nrfx_i2s_uninit(&drv_data->i2s);
 			drv_data->state = I2S_STATE_READY;
@@ -720,7 +711,7 @@ static int trigger_start(const struct device *dev)
 			return -EIO;
 		}
 	} else {
-		ret = start_transfer(drv_data);
+		ret = start_transfer(dev);
 		if (ret < 0) {
 			return ret;
 		}
@@ -837,44 +828,6 @@ static int i2s_nrfx_trigger(const struct device *dev,
 	}
 }
 
-static void init_clock_manager(const struct device *dev)
-{
-	struct i2s_nrfx_drv_data *drv_data = dev->data;
-#if defined(CONFIG_CLOCK_CONTROL_NRF)
-	clock_control_subsys_t subsys;
-
-#if NRF_CLOCK_HAS_HFCLKAUDIO
-	const struct i2s_nrfx_drv_cfg *drv_cfg = dev->config;
-
-	if (drv_cfg->clk_src == ACLK) {
-		subsys = CLOCK_CONTROL_NRF_SUBSYS_HFAUDIO;
-	} else
-#endif
-	{
-		subsys = CLOCK_CONTROL_NRF_SUBSYS_HF;
-	}
-
-	drv_data->clk_mgr = z_nrf_clock_control_get_onoff(subsys);
-	__ASSERT_NO_MSG(drv_data->clk_mgr != NULL);
-#else
-#if NRF_CLOCK_HAS_HFCLKAUDIO
-	const struct i2s_nrfx_drv_cfg *drv_cfg = dev->config;
-
-	if (drv_cfg->clk_src == ACLK) {
-		drv_data->clk_dev = DEVICE_DT_GET_ONE(nordic_nrf_clock_hfclkaudio);
-	} else {
-#endif
-		drv_data->clk_dev = DEVICE_DT_GET_ONE(COND_CODE_1(NRF_CLOCK_HAS_HFCLK,
-								  (nordic_nrf_clock_hfclk),
-								  (nordic_nrf_clock_xo)));
-#if NRF_CLOCK_HAS_HFCLKAUDIO
-	}
-#endif
-
-	__ASSERT_NO_MSG(drv_data->clk_dev != NULL);
-#endif
-}
-
 static DEVICE_API(i2s, i2s_nrf_drv_api) = {
 	.configure = i2s_nrfx_configure,
 	.config_get = i2s_nrfx_config_get,
@@ -883,7 +836,28 @@ static DEVICE_API(i2s, i2s_nrf_drv_api) = {
 	.trigger = i2s_nrfx_trigger,
 };
 
-#define I2S_CLK_SRC(inst) DT_STRING_TOKEN(DT_DRV_INST(inst), clock_source)
+/* Clock-state helpers. The node's `clocks` property points at the nordic,clock-state to use. */
+#if DT_NODE_EXISTS(DT_NODELABEL(aclk))
+#define I2S_ACLK_NODE DT_NODELABEL(aclk)
+#else
+/* No audio-clock signal on this SoC; DT_SAME_NODE below then always resolves to PCLK32M. */
+#define I2S_ACLK_NODE DT_ROOT
+#endif
+
+/* Mux position inferred from the state's signal identity. */
+#define I2S_STATE_MUX(inst)                                                                        \
+	COND_CODE_1(DT_SAME_NODE(NRF_DT_CLK_OUTPUT_BY_IDX(DT_DRV_INST(inst), 0), I2S_ACLK_NODE),    \
+		    (ACLK), (PCLK32M))
+
+/* Producer device to request for the selected state, or NULL when it names none. */
+#define I2S_STATE_DEV(inst)                                                                        \
+	COND_CODE_1(NRF_DT_CLK_PRESENT_BY_IDX(DT_DRV_INST(inst), 0),                                \
+		    (NRF_DT_CLK_DEV_BY_IDX(DT_DRV_INST(inst), 0)), (NULL))
+
+#define I2S_CLK_CFG_FIELDS(inst)                                                                   \
+	.clk_src = I2S_STATE_MUX(inst),                                                             \
+	.clk_dev = I2S_STATE_DEV(inst),                                                             \
+	.clk_state_base_freq = NRF_PERIPH_GET_FREQUENCY_BY_IDX(DT_DRV_INST(inst), 0),
 
 #define I2S_NRFX_DEVICE(inst)                                                                      \
 	static struct i2s_buf tx_msgs##inst[CONFIG_I2S_NRFX_TX_BLOCK_COUNT];                       \
@@ -892,9 +866,19 @@ static DEVICE_API(i2s, i2s_nrf_drv_api) = {
 	{                                                                                          \
 		data_handler(DEVICE_DT_GET(DT_DRV_INST(inst)), p_released, status);                \
 	}                                                                                          \
+	static void clock_started##inst(struct onoff_manager *mgr, struct onoff_client *cli,       \
+					uint32_t state, int res)                                   \
+	{                                                                                          \
+		ARG_UNUSED(mgr);                                                                    \
+		ARG_UNUSED(cli);                                                                    \
+		ARG_UNUSED(state);                                                                  \
+		ARG_UNUSED(res);                                                                    \
+		clock_started(DEVICE_DT_GET(DT_DRV_INST(inst)));                                   \
+	}                                                                                          \
 	PINCTRL_DT_DEFINE(DT_DRV_INST(inst));                                                      \
 	static const struct i2s_nrfx_drv_cfg i2s_nrfx_cfg##inst = {                                \
 		.data_handler = data_handler##inst,                                                \
+		.clk_started_cb = clock_started##inst,                                             \
 		.nrfx_def_cfg = NRFX_I2S_DEFAULT_CONFIG(                                           \
 			NRF_I2S_PIN_NOT_CONNECTED, NRF_I2S_PIN_NOT_CONNECTED,                      \
 			NRF_I2S_PIN_NOT_CONNECTED, NRF_I2S_PIN_NOT_CONNECTED,                      \
@@ -902,7 +886,7 @@ static DEVICE_API(i2s, i2s_nrf_drv_api) = {
 		.nrfx_def_cfg.skip_gpio_cfg = true,                                                \
 		.nrfx_def_cfg.skip_psel_cfg = true,                                                \
 		.pcfg = PINCTRL_DT_DEV_CONFIG_GET(DT_DRV_INST(inst)),                              \
-		.clk_src = I2S_CLK_SRC(inst),                                                      \
+		I2S_CLK_CFG_FIELDS(inst)                                                           \
 	};                                                                                         \
 	static struct i2s_nrfx_drv_data i2s_nrfx_data##inst = {                                    \
 		.state = I2S_STATE_READY,                                                          \
@@ -921,17 +905,8 @@ static DEVICE_API(i2s, i2s_nrf_drv_api) = {
 			    sizeof(struct i2s_buf), ARRAY_SIZE(tx_msgs##inst));                    \
 		k_msgq_init(&i2s_nrfx_data##inst.rx_queue, (char *)rx_msgs##inst,                  \
 			    sizeof(struct i2s_buf), ARRAY_SIZE(rx_msgs##inst));                    \
-		init_clock_manager(dev);                                                           \
 		return 0;                                                                          \
 	}                                                                                          \
-	BUILD_ASSERT(I2S_CLK_SRC(inst) != ACLK ||                                                  \
-			     (NRF_I2S_HAS_CLKCONFIG && NRF_CLOCK_HAS_HFCLKAUDIO),                  \
-		     "Clock source ACLK is not available.");                                       \
-	BUILD_ASSERT(I2S_CLK_SRC(inst) != ACLK || HFCLKAUDIO_FREQUENCY_PRESENT,                    \
-		     "Clock source ACLK requires the hfclkaudio-frequency property"                \
-		     "to be defined in one of the following nodes:"                                \
-		     "nordic,nrf-clock."                                                           \
-		     "nordic,nrf-clock-hfclkaudio.");                                             \
 	DEVICE_DT_INST_DEFINE(inst, i2s_nrfx_init##inst, NULL, &i2s_nrfx_data##inst,               \
 			      &i2s_nrfx_cfg##inst, POST_KERNEL, CONFIG_I2S_INIT_PRIORITY,          \
 			      &i2s_nrf_drv_api);

@@ -1,0 +1,9 @@
+/*
+ * I2S clock-state case: i2s0 on the 32 MHz peripheral clock from the internal oscillator.
+ *
+ * Applied on top of the board overlay (which enables i2s0 and its pinctrl). The pclk32m_hfint
+ * state maps to the PCLK32M mux and names no producer, so no runtime clock request is made.
+ */
+&i2s0 {
+	clocks = <&pclk32m_hfint>;
+};

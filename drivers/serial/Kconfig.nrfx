@@ -50,12 +50,18 @@ config UART_NRFX_UARTE_ENHANCED_RX
 config UART_NRFX_UARTE_HFXO_ON_ACTIVE
 	bool "Request the HFXO oscillator while peripheral is active"
 	depends on UART_NRFX_UARTE
+	depends on CLOCK_CONTROL_NRF
 	depends on !SOC_NRF54H20
 	help
 	  Request the HFXO oscillator to be enabled while the UART peripheral is
 	  active. This improves the accuracy of the bitrate versus the HFINT oscillator,
 	  at the cost of startup latency (~700 us) when enabling the peripheral if the
 	  HFXO is not already active.
+
+	  This is a legacy mechanism that acts on the HFCLK subsystem of the legacy
+	  CLOCK_CONTROL_NRF driver and needs no `clocks` property. It is independent of
+	  the UART_NRFX_UARTE_CLOCK_MGMT scheme, which acts on a producer referenced by
+	  the `clocks` property through the split clock control drivers.
 
 config UART_ASYNC_TX_CACHE_SIZE
 	int "TX cache buffer size"
@@ -107,6 +113,61 @@ config UART_NRFX_UARTE_BOUNCE_BUF_SWAP_LATENCY
 config UART_NRFX_UARTE_DIRECT_ISR
 	bool "Use direct ISR"
 	default y if !MULTITHREADING
+
+choice UART_NRFX_UARTE_CLOCK_MGMT
+	prompt "Clock management scheme"
+	default UART_NRFX_UARTE_CLOCK_MGMT_ON_INIT
+	depends on UART_NRFX_UARTE
+	help
+	  Determines when the driver requests and releases the clock producer of the clock
+	  state that is selected by the `clocks` property of a UARTE instance.
+
+	  This only selects the timing, not whether clock management happens at all: an
+	  instance is acted upon exactly when it selects a clock state that has a producer,
+	  typically in a devicetree overlay. Instances that select a state without a producer,
+	  or that have no `clocks` property, are never acted upon regardless of the scheme, so
+	  the scheme has no effect and no code is generated for them.
+
+	  Requesting a clock producer allows the peripheral to be clocked by a source
+	  more accurate than the one that the hardware requests automatically, for
+	  example HFXO instead of HFINT, at the cost of the producer startup latency.
+
+	  The request is started asynchronously, so it can be issued from any context.
+	  When it is issued from a thread, the driver then blocks until the producer is
+	  up, so that the peripheral is clocked by it from the first subsequent operation.
+	  When it is issued from an interrupt or before the kernel is running, the driver
+	  cannot block, so the peripheral runs on the clock that the hardware requests
+	  automatically until the producer has started, gaining accuracy once it is up.
+
+	  Both schemes act on the instance as a whole. Requesting the producer only for
+	  the duration of a single transfer is not supported.
+
+config UART_NRFX_UARTE_CLOCK_MGMT_ON_PM
+	bool "Manage clock on peripheral power management transitions"
+	depends on PM_DEVICE_RUNTIME
+	help
+	  The clock producer is requested when the driver is resumed and released when
+	  the driver is suspended, so it is active for as long as the instance is in use.
+
+	  Because the resume is driven by pm_device_runtime_get() ahead of every
+	  operation, a resume from a thread blocks until the producer is up, so the
+	  operation that triggered it is already clocked by the producer.
+
+config UART_NRFX_UARTE_CLOCK_MGMT_ON_INIT
+	bool "Manage clock on peripheral initialization"
+	help
+	  The clock producer is requested when the driver is initialized and released
+	  when the driver is deinitialized, so it stays active for as long as the driver
+	  exists.
+
+	  This requires the producer to be initialized before the instance, which is the
+	  case with the default initialization priorities.
+
+	  The request is issued before the kernel is running, so the driver cannot block
+	  on it. The producer therefore starts in the background and the instance reaches
+	  full accuracy once it is up, typically well before the first transfer.
+
+endchoice
 
 if HAS_HW_NRF_UART0 || HAS_HW_NRF_UARTE0
 nrfx_uart_num = 0

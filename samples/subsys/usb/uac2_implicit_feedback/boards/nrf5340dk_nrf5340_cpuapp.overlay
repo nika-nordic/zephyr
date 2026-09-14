@@ -22,7 +22,7 @@
 };
 
 &hfclkaudio {
-	hfclkaudio-frequency = <12288000>;
+	clock-frequency = <12288000>;
 };
 
 i2s_rxtx: &i2s0 {

@@ -236,14 +236,73 @@ static DEVICE_API(nrf_clock_control, drv_api_auxpll) = {
 	.cancel_or_release = api_cancel_or_release_auxpll,
 };
 
+/*
+ * Frequency <-> divider-token helpers. From the binding:
+ *
+ *   f_out = (R * f_ref + (f_ref * A) / 2^16) / B,   R = nordic,range idx + 3
+ *
+ * where A is the fractional PLL divider (register FREQUENCY field). A may be
+ * supplied directly through the deprecated nordic,frequency, or derived from
+ * the requested output clock-frequency (Hz). All terms are DeviceTree values,
+ * so the derivation and its cross-checks happen entirely at build time.
+ */
+#define AUXPLL_DIV_SCALE (AUXPLL_AUXPLLCTRL_FREQUENCY_FREQUENCY_MaximumDiv + 1U) /* 2^16 */
+#define AUXPLL_FREF(n)   DT_PROP(DT_INST_CLOCKS_CTLR(n), clock_frequency)
+#define AUXPLL_R(n)      (DT_INST_ENUM_IDX(n, nordic_range) + 3U)
+#define AUXPLL_B(n)      DT_INST_PROP(n, nordic_out_div)
+
+/* Forward: output Hz produced by divider token a (mirrors get_rate, truncating). */
+#define AUXPLL_HZ_FROM_A(n, a)                                                                     \
+	((uint32_t)((AUXPLL_R(n) * (uint64_t)AUXPLL_FREF(n) +                                      \
+		     ((uint64_t)AUXPLL_FREF(n) * (a)) / AUXPLL_DIV_SCALE) /                        \
+		    AUXPLL_B(n)))
+
+/* A = round( (f_out * B - R * f_ref) * 2^16 / f_ref ). The FREQUENCY field is a
+ * continuous 16-bit fractional divider (ratios 4..5), so the target clock-frequency
+ * is rounded to the nearest achievable divider - the same scheme as the audiopll
+ * shim - which minimises the quantisation error. For example 12288000 rounds to
+ * 39846 (real 12288004, +0.37 ppm) rather than snapping to the AUDIO_48K token 39845
+ * (real 12287963, -2.94 ppm), and it matches what audiopll produces on nRF54H20.
+ */
+#define AUXPLL_A_FROM_HZ(n)                                                                        \
+	((uint32_t)(((((uint64_t)DT_INST_PROP_OR(n, clock_frequency, 0) * AUXPLL_B(n)) -           \
+		      ((uint64_t)AUXPLL_R(n) * AUXPLL_FREF(n))) *                                  \
+			     AUXPLL_DIV_SCALE +                                                    \
+		     (AUXPLL_FREF(n) / 2U)) /                                                     \
+		    AUXPLL_FREF(n)))
+
+/* Effective divider: explicit legacy token wins, else derived from the target Hz. */
+#define AUXPLL_A(n)                                                                                \
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(n, nordic_frequency),                                    \
+		    (DT_INST_PROP_OR(n, nordic_frequency, 0)), (AUXPLL_A_FROM_HZ(n)))
+
+/* Producible band for this node's range/out-div/source clock: A in [0, 2^16 - 1]. */
+#define AUXPLL_FMIN(n) AUXPLL_HZ_FROM_A(n, 0)
+#define AUXPLL_FMAX(n) AUXPLL_HZ_FROM_A(n, AUXPLL_AUXPLLCTRL_FREQUENCY_FREQUENCY_MaximumDiv)
+
+/* Legacy nordic,frequency must still be one of Nordic's named divider tokens. */
+#define AUXPLL_LEGACY_TOKEN_OK(n)                                                                  \
+	(!DT_INST_NODE_HAS_PROP(n, nordic_frequency) ||                                            \
+	 DT_INST_PROP_OR(n, nordic_frequency, 0) == NRF_AUXPLL_FREQUENCY_DIV_MIN ||                \
+	 DT_INST_PROP_OR(n, nordic_frequency, 0) == NRF_AUXPLL_FREQUENCY_AUDIO_44K1 ||             \
+	 DT_INST_PROP_OR(n, nordic_frequency, 0) == NRF_AUXPLL_FREQUENCY_USB_24M ||                \
+	 DT_INST_PROP_OR(n, nordic_frequency, 0) == NRF_AUXPLL_FREQUENCY_AUDIO_48K ||              \
+	 DT_INST_PROP_OR(n, nordic_frequency, 0) == NRF_AUXPLL_FREQUENCY_DIV_MAX)
+
+/* Derived target (clock-frequency) must lie within the producible band. */
+#define AUXPLL_TARGET_IN_BAND(n)                                                                   \
+	(!DT_INST_NODE_HAS_PROP(n, clock_frequency) ||                                             \
+	 (DT_INST_PROP_OR(n, clock_frequency, 0) >= AUXPLL_FMIN(n) &&                              \
+	  DT_INST_PROP_OR(n, clock_frequency, 0) <= AUXPLL_FMAX(n)))
+
 #define CLOCK_CONTROL_NRF_AUXPLL_DEFINE(n)                                                         \
-	BUILD_ASSERT(                                                                              \
-		DT_INST_PROP(n, nordic_frequency) == NRF_AUXPLL_FREQUENCY_DIV_MIN     ||           \
-		DT_INST_PROP(n, nordic_frequency) == NRF_AUXPLL_FREQUENCY_AUDIO_44K1  ||           \
-		DT_INST_PROP(n, nordic_frequency) == NRF_AUXPLL_FREQUENCY_USB_24M     ||           \
-		DT_INST_PROP(n, nordic_frequency) == NRF_AUXPLL_FREQUENCY_AUDIO_48K   ||           \
-		DT_INST_PROP(n, nordic_frequency) == NRF_AUXPLL_FREQUENCY_DIV_MAX,                 \
+	BUILD_ASSERT(DT_INST_NODE_HAS_PROP(n, clock_frequency) ||                                  \
+			     DT_INST_NODE_HAS_PROP(n, nordic_frequency),                          \
+		"AUXPLL instance " #n " needs clock-frequency (or legacy nordic,frequency)");      \
+	BUILD_ASSERT(AUXPLL_LEGACY_TOKEN_OK(n),                                                    \
 		"Invalid nordic,frequency value in DeviceTree for AUXPLL instance " #n);           \
+	BUILD_ASSERT(AUXPLL_TARGET_IN_BAND(n),                                                     \
+		"clock-frequency is outside the AUXPLL producible band for instance " #n);         \
 	BUILD_ASSERT(DT_INST_PROP(n, nordic_out_div) > 0,                                          \
 		"nordic,out_div must be greater than 0 for AUXPLL instance " #n);                  \
 	static struct dev_data_auxpll data_auxpll##n    = {                                        \
@@ -262,7 +321,7 @@ static DEVICE_API(nrf_clock_control, drv_api_auxpll) = {
 				.dither_off = DT_INST_PROP(n, nordic_dither_disable),              \
 				.range = DT_INST_ENUM_IDX(n, nordic_range),                        \
 			},                                                                         \
-		.frequency = DT_INST_PROP(n, nordic_frequency),                                    \
+		.frequency = AUXPLL_A(n),                                                          \
 		.out_div = DT_INST_PROP(n, nordic_out_div),                                        \
 	};                                                                                         \
 	                                                                                           \

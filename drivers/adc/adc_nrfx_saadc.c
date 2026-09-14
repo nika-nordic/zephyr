@@ -4,8 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#if defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE) && defined(CONFIG_ADC_ASYNC)
+/* Under the ON_ACTIVE scheme an asynchronous read requests the clock producer before triggering
+ * and releases it once the conversion sequence has completed. adc_context_complete() is the single
+ * point that runs exactly once per sequence (on every terminal path), so the release is hooked
+ * there through adc_context_on_complete().
+ */
+#define ADC_CONTEXT_ENABLE_ON_COMPLETE
+#endif
 #include "adc_context.h"
 #include <nrfx_saadc.h>
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <zephyr/dt-bindings/adc/nrf-saadc.h>
 #include <zephyr/linker/devicetree_regions.h>
 #include <zephyr/logging/log.h>
@@ -18,6 +27,31 @@
 LOG_MODULE_REGISTER(adc_nrfx_saadc, CONFIG_ADC_LOG_LEVEL);
 
 #define DT_DRV_COMPAT nordic_nrf_saadc
+
+/* The SAADC selects a clock state through its `clocks` property. It is acted upon by the
+ * clock-management scheme (ADC_NRFX_SAADC_CLOCK_MGMT_* choice) only when the selected state names
+ * a producer to request; a state without a producer (or no `clocks` property) generates no clock
+ * code.
+ */
+#if NRF_DT_CLK_PRESENT(DT_DRV_INST(0))
+#define SAADC_ANY_CLK 1
+#endif
+
+/* The selected state additionally carries a producer specification (for example an accuracy that
+ * selects the HFXO source on nRF54H20); it is passed with the request.
+ */
+#if NRF_DT_CLK_HAS_SPEC(DT_DRV_INST(0))
+#define SAADC_ANY_CLK_SPEC 1
+#endif
+
+/* Asynchronous ON_ACTIVE reads defer the conversion until the producer has started: the request is
+ * issued without blocking and saadc_clk_ready_async() triggers the conversion from the completion
+ * of the clock startup.
+ */
+#if defined(SAADC_ANY_CLK) && defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE) &&                \
+	defined(CONFIG_ADC_ASYNC)
+#define SAADC_CLK_ASYNC_TRIGGER 1
+#endif
 
 BUILD_ASSERT((NRF_SAADC_AIN0 == NRFX_ANALOG_EXTERNAL_AIN0) &&
 	     (NRF_SAADC_AIN1 == NRFX_ANALOG_EXTERNAL_AIN1) &&
@@ -45,6 +79,17 @@ struct driver_data {
 	void *user_buffer;
 	struct k_timer timer;
 	bool internal_timer_enabled;
+#ifdef SAADC_ANY_CLK
+	/* Owns the request the driver holds on the clock producer of the selected state. */
+	struct onoff_client clk_cli;
+	struct k_sem clk_ready;
+#endif
+#ifdef SAADC_CLK_ASYNC_TRIGGER
+	/* Sequence of an asynchronous read whose conversion is triggered once the producer has
+	 * started (from saadc_clk_ready_async()).
+	 */
+	const struct adc_sequence *async_sequence;
+#endif
 };
 
 static struct driver_data m_data = {
@@ -53,6 +98,154 @@ static struct driver_data m_data = {
 	.mem_reg = DMM_DEV_TO_REG(DT_NODELABEL(adc)),
 	.internal_timer_enabled = false,
 };
+
+#ifdef SAADC_ANY_CLK
+/* Clock producer to request; the selected state names it in devicetree. */
+static const struct device *const saadc_clk_dev = NRF_DT_CLK_DEV(DT_DRV_INST(0));
+#endif
+
+#ifdef SAADC_ANY_CLK_SPEC
+/* Producer specification of the selected state, embedded by value. A spec with no constraint
+ * (every field zero) is equivalent to no spec; saadc_clk_spec() reports it as NULL.
+ */
+static const struct nrf_clock_spec saadc_clk_spec = NRF_DT_CLK_SPEC(DT_DRV_INST(0));
+
+static inline const struct nrf_clock_spec *saadc_clk_spec_get(void)
+{
+	/* A spec-carrying state always resolves to a non-zero frequency, so frequency == 0 marks a
+	 * state without a producer spec: request the producer with its default configuration.
+	 */
+	if (saadc_clk_spec.frequency == 0) {
+		return NULL;
+	}
+
+	return &saadc_clk_spec;
+}
+#endif
+
+#ifdef SAADC_ANY_CLK
+/* Completion notification of a clock request; releases the requesting site once the producer is
+ * up.
+ */
+static void saadc_clk_ready(struct onoff_manager *mgr, struct onoff_client *cli, uint32_t state,
+			    int res)
+{
+	ARG_UNUSED(mgr);
+	ARG_UNUSED(cli);
+	ARG_UNUSED(state);
+	ARG_UNUSED(res);
+
+	k_sem_give(&m_data.clk_ready);
+}
+
+/* Request the clock producer referenced by the selected state.
+ *
+ * The request is asynchronous, so it can be started from any context, including before the kernel
+ * is running. When called from a thread it then blocks until the producer is up, so that the SAADC
+ * is clocked by it from the first subsequent conversion; otherwise it returns immediately and the
+ * SAADC runs on the automatically requested clock until the producer has started.
+ */
+static void saadc_clk_request(void)
+{
+#ifdef SAADC_ANY_CLK_SPEC
+	const struct nrf_clock_spec *spec = saadc_clk_spec_get();
+#else
+	const struct nrf_clock_spec *spec = NULL;
+#endif
+
+	k_sem_reset(&m_data.clk_ready);
+	sys_notify_init_callback(&m_data.clk_cli.notify, saadc_clk_ready);
+
+	(void)nrf_clock_control_request(saadc_clk_dev, spec, &m_data.clk_cli);
+
+	if (!k_is_in_isr() && !k_is_pre_kernel()) {
+		(void)k_sem_take(&m_data.clk_ready, K_FOREVER);
+	}
+}
+
+/* Release (or cancel, if still starting) the clock producer request. Only the ON_PM and ON_ACTIVE
+ * schemes release; ON_INIT holds the request for the driver lifetime.
+ */
+#if defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_PM) ||                                              \
+	defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE)
+static void saadc_clk_release(void)
+{
+#ifdef SAADC_ANY_CLK_SPEC
+	const struct nrf_clock_spec *spec = saadc_clk_spec_get();
+#else
+	const struct nrf_clock_spec *spec = NULL;
+#endif
+
+	(void)nrf_clock_control_cancel_or_release(saadc_clk_dev, spec, &m_data.clk_cli);
+}
+#endif
+#endif /* SAADC_ANY_CLK */
+
+#ifdef ADC_CONTEXT_ENABLE_ON_COMPLETE
+/* Release the producer requested by adc_nrfx_read_async() once the conversion sequence completes.
+ * adc_context_complete() invokes this exactly once per sequence, on every terminal path (success
+ * or error), possibly from the SAADC ISR - the release is ISR-safe. Synchronous reads release
+ * inline in adc_nrfx_read() instead, so this acts only on asynchronous sequences. An async read
+ * whose producer request could not even be issued never reaches completion; adc_nrfx_read_async()
+ * reports that failure without acquiring anything to release.
+ */
+static void adc_context_on_complete(struct adc_context *ctx, int status)
+{
+	ARG_UNUSED(status);
+
+#ifdef SAADC_ANY_CLK
+	if (ctx->asynchronous) {
+		saadc_clk_release();
+	}
+#else
+	ARG_UNUSED(ctx);
+#endif
+}
+#endif /* ADC_CONTEXT_ENABLE_ON_COMPLETE */
+
+#ifdef SAADC_CLK_ASYNC_TRIGGER
+/* Defined below; the asynchronous read triggers the conversion from the clock-ready callback. */
+static int start_read(const struct device *dev, const struct adc_sequence *sequence);
+
+/* Completion of the producer startup for an asynchronous read. Runs in whatever context finishes
+ * the startup (possibly an ISR). The producer is now up, so trigger the conversion. res is ignored,
+ * mirroring the PDM/I2S idiom: a successfully issued request is always matched by a release from
+ * adc_context_on_complete(), and a failed startup simply leaves the SAADC on the automatically
+ * requested clock. A pre-trigger failure is reported through the completion.
+ */
+static void saadc_clk_ready_async(struct onoff_manager *mgr, struct onoff_client *cli,
+				  uint32_t state, int res)
+{
+	int error;
+
+	ARG_UNUSED(mgr);
+	ARG_UNUSED(cli);
+	ARG_UNUSED(state);
+	ARG_UNUSED(res);
+
+	error = start_read(DEVICE_DT_INST_GET(0), m_data.async_sequence);
+	if (error) {
+		adc_context_complete(&m_data.ctx, error);
+	}
+}
+
+/* Issue the producer request for an asynchronous read without blocking; the conversion is triggered
+ * from saadc_clk_ready_async() once the producer is up. Returns the nrf_clock_control_request()
+ * result: a negative value means nothing was acquired and no completion will run.
+ */
+static int saadc_clk_request_async(void)
+{
+#ifdef SAADC_ANY_CLK_SPEC
+	const struct nrf_clock_spec *spec = saadc_clk_spec_get();
+#else
+	const struct nrf_clock_spec *spec = NULL;
+#endif
+
+	sys_notify_init_callback(&m_data.clk_cli.notify, saadc_clk_ready_async);
+
+	return nrf_clock_control_request(saadc_clk_dev, spec, &m_data.clk_cli);
+}
+#endif /* SAADC_CLK_ASYNC_TRIGGER */
 
 /* Maximum value of the internal timer interval in microseconds. */
 #define ADC_INTERNAL_TIMER_INTERVAL_MAX_US 128U
@@ -623,9 +816,20 @@ static int adc_nrfx_read(const struct device *dev,
 		return error;
 	}
 
+#if defined(SAADC_ANY_CLK) && defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE)
+	/* Request the producer for the duration of this conversion. adc_read() runs in a thread,
+	 * so the request blocks until the producer is up and the conversion is clocked by it.
+	 */
+	saadc_clk_request();
+#endif
+
 	adc_context_lock(&m_data.ctx, false, NULL);
 	error = start_read(dev, sequence);
 	adc_context_release(&m_data.ctx, error);
+
+#if defined(SAADC_ANY_CLK) && defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_ACTIVE)
+	saadc_clk_release();
+#endif
 
 	if (pm_device_runtime_put(dev)) {
 		LOG_ERR_PM_DEVICE_RUNTIME_PUT(dev);
@@ -642,11 +846,33 @@ static int adc_nrfx_read_async(const struct device *dev,
 {
 	int error;
 
+#ifdef SAADC_CLK_ASYNC_TRIGGER
+	ARG_UNUSED(dev);
+
+	adc_context_lock(&m_data.ctx, true, async);
+
+	/* Start the producer without blocking and return immediately. saadc_clk_ready_async()
+	 * triggers the conversion once the producer is up, and adc_context_on_complete() releases
+	 * it when the sequence finishes.
+	 */
+	m_data.async_sequence = sequence;
+	error = saadc_clk_request_async();
+	if (error < 0) {
+		/* Nothing was acquired and no completion callback will run: report the failure and
+		 * release the lock here.
+		 */
+		adc_context_release(&m_data.ctx, error);
+		return error;
+	}
+
+	return 0;
+#else
 	adc_context_lock(&m_data.ctx, true, async);
 	error = start_read(dev, sequence);
 	adc_context_release(&m_data.ctx, error);
 
 	return error;
+#endif
 }
 #endif /* CONFIG_ADC_ASYNC */
 
@@ -682,13 +908,32 @@ static void event_handler(const nrfx_saadc_evt_t *event)
 static int saadc_pm_handler(const struct device *dev, enum pm_device_action action)
 {
 	ARG_UNUSED(dev);
+
+#if defined(SAADC_ANY_CLK) && defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_PM)
+	switch (action) {
+	case PM_DEVICE_ACTION_RESUME:
+		saadc_clk_request();
+		break;
+	case PM_DEVICE_ACTION_SUSPEND:
+		saadc_clk_release();
+		break;
+	default:
+		break;
+	}
+#else
 	ARG_UNUSED(action);
+#endif
+
 	return 0;
 }
 
 static int init_saadc(const struct device *dev)
 {
 	int err;
+
+#ifdef SAADC_ANY_CLK
+	k_sem_init(&m_data.clk_ready, 0, 1);
+#endif
 
 	k_timer_init(&m_data.timer, external_timer_expired_handler, NULL);
 
@@ -702,6 +947,13 @@ static int init_saadc(const struct device *dev)
 	IRQ_CONNECT(DT_INST_IRQN(0), DT_INST_IRQ(0, priority), nrfx_isr, nrfx_saadc_irq_handler, 0);
 
 	adc_context_unlock_unconditionally(&m_data.ctx);
+
+#if defined(SAADC_ANY_CLK) && defined(CONFIG_ADC_NRFX_SAADC_CLOCK_MGMT_ON_INIT)
+	/* Issued before the kernel is running, so it does not block: the producer starts in the
+	 * background and the SAADC gains accuracy once it is up. Held for the driver lifetime.
+	 */
+	saadc_clk_request();
+#endif
 
 	return pm_device_driver_init(dev, saadc_pm_handler);
 }

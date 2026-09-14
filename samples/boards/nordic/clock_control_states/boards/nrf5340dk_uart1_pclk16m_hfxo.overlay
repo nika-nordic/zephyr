@@ -1,0 +1,20 @@
+/*
+ * Case: nRF5340, uart1 as the consumer, 16 MHz base with the HFXO requested as a producer.
+ *
+ * uart1 is only used to carry the clock state; the sample does not operate the UARTE. The
+ * pclk16m_hfxo state runs at 16 MHz and names HFCLK (and thus the HFXO) as its producer,
+ * which the sample requests through the clock control API.
+ */
+/ {
+	aliases {
+		clk-consumer = &uart1;
+	};
+};
+
+&uart1 {
+	clocks = <&pclk16m_hfxo>;
+};
+
+&hfclk {
+	status = "okay";
+};

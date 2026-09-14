@@ -49,7 +49,7 @@
 	};
 
 	clocks {
-		pclk: pclk {
+		pclk16m: pclk16m {
 			compatible = "fixed-clock";
 			#clock-cells = <0>;
 			clock-frequency = <DT_FREQ_M(16)>;
@@ -81,9 +81,12 @@
 		};
 
 		aclk: aclk {
-			compatible = "fixed-clock";
+			/*
+			 * Audio clock signal - a bindingless node that only identifies the ACLK
+			 * mux position for clock states (matched by node identity). Its rate is
+			 * owned by the state's producer (xo24m), so it carries no clock-frequency.
+			 */
 			#clock-cells = <0>;
-			clock-frequency = <DT_FREQ_M(24)>;
 		};
 	};
 
@@ -646,7 +649,7 @@
 				compatible = "nordic,nrf-grtc";
 				reg = <0xe2000 0x1000>;
 				cc-num = <12>;
-				clocks = <&lfxo>, <&pclk>;
+				clocks = <&lfxo>, <&pclk16m>;
 				clock-names = "lfclock", "hfclock";
 				status = "disabled";
 				extended-channels = <0>;
@@ -972,3 +975,9 @@
 		};
 	};
 };
+
+/* Clock states (nordic,clock-state) that consumers select through their `clocks` property.
+ * Kept in a separate file, like board pinctrl states, and included last so that the clock
+ * signals and producers they reference are already defined.
+ */
+#include "nrf54lm20_a_b-clock-states.dtsi"

@@ -4,13 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#if CONFIG_CLOCK_CONTROL_NRF
-#include <hal/nrf_clock.h>
-#endif
 #include <hal/nrf_tdm.h>
 #include <haly/nrfy_gpio.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
-#include <zephyr/dt-bindings/clock/nrf-auxpll.h>
 #include <zephyr/drivers/i2s.h>
 #include <zephyr/drivers/pinctrl.h>
 #include <zephyr/irq.h>
@@ -50,22 +46,18 @@ LOG_MODULE_REGISTER(tdm_nrf, CONFIG_I2S_LOG_LEVEL);
 	GENMASK(TDM_CONFIG_CHANNEL_MASK_Rx0Enable_Pos + TDM_CONFIG_CHANNEL_NUM_NUM_Max,            \
 		TDM_CONFIG_CHANNEL_MASK_Rx0Enable_Pos)
 
-#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(audiopll))
-#define NODE_ACLK      DT_NODELABEL(audiopll)
-#define ACLK_FREQUENCY DT_PROP_OR(NODE_ACLK, frequency, 0)
-#elif DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(audio_auxpll))
-#define NODE_AUDIO_AUXPLL     DT_NODELABEL(audio_auxpll)
-#define ACLK_NORDIC_FREQUENCY DT_PROP(NODE_AUDIO_AUXPLL, nordic_frequency)
-BUILD_ASSERT((ACLK_NORDIC_FREQUENCY == NRF_AUXPLL_FREQ_DIV_AUDIO_48K) ||
-	     (ACLK_NORDIC_FREQUENCY == NRF_AUXPLL_FREQ_DIV_AUDIO_44K1),
-	     "Unsupported Audio AUXPLL frequency selection for TDM");
-#define ACLK_FREQUENCY CLOCK_CONTROL_NRF_AUXPLL_GET_FREQ(NODE_AUDIO_AUXPLL)
-#elif DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(aclk))
-#define NODE_ACLK      DT_NODELABEL(aclk)
-#define ACLK_FREQUENCY DT_PROP_OR(NODE_ACLK, clock_frequency, 0)
-#else
-#define ACLK_FREQUENCY 0
-#endif
+/*
+ * The tdm node selects its clock through the nordic,clock-state(s) referenced by its `clocks`
+ * property. The driver derives everything from the referenced state(s): the SCK and MCK mux
+ * positions from the state signal identity, the base frequencies from the signal, and the
+ * producer(s) to request from the state. SCK is `clocks` index 0, MCK is index 1; if only one
+ * entry is given it applies to both. Because each of SCK and MCK can select a state with its own
+ * producer, up to two producers may be requested concurrently (for example the audio clock for
+ * SCK and HFXO-backed PCLK32M for MCK), so this driver keeps a client per index.
+ *
+ * The completion callbacks recover the config via CONTAINER_OF(cli)->drv_cfg (tdm_drv_data already
+ * carries a drv_cfg back-pointer), so no per-instance trampoline is needed.
+ */
 
 typedef struct {
 	uint32_t *p_rx_buffer;
@@ -107,22 +99,30 @@ struct tdm_drv_cfg {
 	void *mem_reg;
 	tdm_ctrl_t *control_data;
 	uint32_t mck_frequency;
-	uint32_t pclk_frequency;
 	enum clock_source {
 		PCLK,
 		ACLK
 	} sck_src, mck_src;
+	/* Producer to request for each signal, or NULL when the selected state needs none. The
+	 * request is made with a NULL clock specification: the producer owns its rate through its
+	 * own devicetree configuration and the consumer does not constrain it.
+	 */
+	const struct device *sck_clk_dev;
+	const struct device *mck_clk_dev;
+	/* Base frequency of the signal selected for each of SCK and MCK. */
+	uint32_t sck_base_freq;
+	uint32_t mck_base_freq;
 };
 
 struct tdm_drv_data {
-#if CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL || DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL) ||            \
-	((NRF_CLOCK_HAS_HFCLK24M || NRF_CLOCK_HAS_HFCLKAUDIO) && !CONFIG_CLOCK_CONTROL_NRF)
-	const struct device *audioclock;
-	struct nrf_clock_spec aclk_spec;
-#elif CONFIG_CLOCK_CONTROL_NRF
-	struct onoff_manager *clk_mgr;
-#endif
-	struct onoff_client clk_cli;
+	/* The producers themselves are compile-time constants in the const config
+	 * (sck_clk_dev/mck_clk_dev), so runtime data only holds the mutable request state.
+	 * One client per requestable signal; up to two producers can be live at once.
+	 */
+	struct onoff_client sck_cli;
+	struct onoff_client mck_cli;
+	/* Number of producer requests still pending before the transfer may start. */
+	atomic_t clk_pending;
 	struct stream_cfg tx;
 	struct k_msgq tx_queue;
 	struct stream_cfg rx;
@@ -140,33 +140,22 @@ struct tdm_drv_data {
 	bool request_clock: 1;
 };
 
-static int audio_clock_request(struct tdm_drv_data *drv_data)
-{
-#if DT_NODE_HAS_STATUS_OKAY(NODE_ACLK) && CONFIG_CLOCK_CONTROL_NRF
-	return onoff_request(drv_data->clk_mgr, &drv_data->clk_cli);
-#elif (DT_NODE_HAS_STATUS_OKAY(NODE_ACLK) && CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL) || \
-	  DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-	return nrf_clock_control_request(drv_data->audioclock, &drv_data->aclk_spec,
-					 &drv_data->clk_cli);
-#else
-	(void)drv_data;
-
-	return -ENOTSUP;
-#endif
-}
-
+/* Release every producer that was requested for this device. Requests are refcounted, so when
+ * SCK and MCK selected the same producer it was requested twice (one client each) and is
+ * released twice here, keeping the balance.
+ */
 static int audio_clock_release(struct tdm_drv_data *drv_data)
 {
-#if DT_NODE_HAS_STATUS_OKAY(NODE_ACLK) && CONFIG_CLOCK_CONTROL_NRF
-	return onoff_release(drv_data->clk_mgr);
-#elif (DT_NODE_HAS_STATUS_OKAY(NODE_ACLK) && CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL) || \
-	  DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-	return nrf_clock_control_release(drv_data->audioclock, &drv_data->aclk_spec);
-#else
-	(void)drv_data;
+	const struct tdm_drv_cfg *drv_cfg = drv_data->drv_cfg;
 
-	return -ENOTSUP;
-#endif
+	if (drv_cfg->sck_clk_dev != NULL) {
+		(void)nrf_clock_control_release(drv_cfg->sck_clk_dev, NULL);
+	}
+	if (drv_cfg->mck_clk_dev != NULL) {
+		(void)nrf_clock_control_release(drv_cfg->mck_clk_dev, NULL);
+	}
+
+	return 0;
 }
 
 static nrf_tdm_channels_count_t nrf_tdm_chan_num_get(uint8_t nb_of_channels)
@@ -600,7 +589,8 @@ static int tdm_nrf_configure(const struct device *dev, enum i2s_dir dir,
 	}
 
 	nrfx_cfg.mck_setup = 0;
-	uint32_t src_freq = (drv_cfg->mck_src == ACLK) ? ACLK_FREQUENCY : drv_cfg->pclk_frequency;
+	/* Base frequency comes opaquely from the selected clock state's signal/producer. */
+	uint32_t src_freq = drv_cfg->mck_base_freq;
 
 	if ((FIELD_GET(TDM_PSEL_MCK_CONNECT_Msk, nrf_tdm_mck_pin_get(drv_cfg->p_reg)) ==
 	     TDM_PSEL_MCK_CONNECT_Connected) &&
@@ -611,14 +601,11 @@ static int tdm_nrf_configure(const struct device *dev, enum i2s_dir dir,
 		uint32_t sck_freq = tdm_cfg->word_size * tdm_cfg->frame_clk_freq *
 				    (tdm_cfg->channels + extra_channels);
 
-		src_freq = (drv_cfg->sck_src == ACLK) ? ACLK_FREQUENCY : drv_cfg->pclk_frequency;
+		src_freq = drv_cfg->sck_base_freq;
 		nrfx_cfg.sck_setup = div_calculate(src_freq, sck_freq);
 	}
-	/* Unless the PCLK source is used,
-	 * it is required to request the proper clock to be running
-	 * before starting the transfer itself.
-	 */
-	drv_data->request_clock = (drv_cfg->sck_src != PCLK) || (drv_cfg->mck_src != PCLK);
+	/* A producer only has to be requested when the selected state(s) actually name one. */
+	drv_data->request_clock = (drv_cfg->sck_clk_dev != NULL || drv_cfg->mck_clk_dev != NULL);
 
 	if (tdm_cfg->options & (I2S_OPT_LOOPBACK | I2S_OPT_PINGPONG)) {
 		LOG_ERR("Unsupported options: 0x%02x", tdm_cfg->options);
@@ -832,21 +819,70 @@ static void tdm_init(struct tdm_drv_data *drv_data, nrf_tdm_config_t const *p_co
 	NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_reg));
 }
 
-static void clock_started_callback(struct onoff_manager *mgr, struct onoff_client *cli,
-				   uint32_t state, int res)
+/* Runs once all requested producers have started. */
+static void clock_state_all_started(struct tdm_drv_data *drv_data)
 {
-	struct tdm_drv_data *drv_data = CONTAINER_OF(cli, struct tdm_drv_data, clk_cli);
-
-	/* The driver state can be set back to READY at this point if the DROP
-	 * command was triggered before the clock has started. Do not start
-	 * the actual transfer in such case.
-	 */
 	if (drv_data->state == I2S_STATE_READY) {
 		tdm_uninit(drv_data);
 		(void)audio_clock_release(drv_data);
 	} else {
 		(void)start_transfer(drv_data);
 	}
+}
+
+/* Each producer completion decrements the pending count; the last one starts the transfer. */
+static void clock_state_one_started(struct tdm_drv_data *drv_data)
+{
+	if (atomic_dec(&drv_data->clk_pending) == 1) {
+		clock_state_all_started(drv_data);
+	}
+}
+
+static void sck_clock_started_callback(struct onoff_manager *mgr, struct onoff_client *cli,
+				       uint32_t state, int res)
+{
+	clock_state_one_started(CONTAINER_OF(cli, struct tdm_drv_data, sck_cli));
+}
+
+static void mck_clock_started_callback(struct onoff_manager *mgr, struct onoff_client *cli,
+				       uint32_t state, int res)
+{
+	clock_state_one_started(CONTAINER_OF(cli, struct tdm_drv_data, mck_cli));
+}
+
+static int audio_clock_request(struct tdm_drv_data *drv_data)
+{
+	const struct tdm_drv_cfg *drv_cfg = drv_data->drv_cfg;
+	unsigned int pending = (drv_cfg->sck_clk_dev != NULL ? 1 : 0) +
+			       (drv_cfg->mck_clk_dev != NULL ? 1 : 0);
+	int ret;
+
+	/* Set the count before issuing any request: a producer that is already running notifies
+	 * synchronously from within nrf_clock_control_request().
+	 */
+	atomic_set(&drv_data->clk_pending, (atomic_val_t)pending);
+
+	if (drv_cfg->sck_clk_dev != NULL) {
+		sys_notify_init_callback(&drv_data->sck_cli.notify, sck_clock_started_callback);
+		ret = nrf_clock_control_request(drv_cfg->sck_clk_dev, NULL, &drv_data->sck_cli);
+		if (ret < 0) {
+			return ret;
+		}
+	}
+
+	if (drv_cfg->mck_clk_dev != NULL) {
+		sys_notify_init_callback(&drv_data->mck_cli.notify, mck_clock_started_callback);
+		ret = nrf_clock_control_request(drv_cfg->mck_clk_dev, NULL, &drv_data->mck_cli);
+		if (ret < 0) {
+			if (drv_cfg->sck_clk_dev != NULL) {
+				(void)nrf_clock_control_cancel_or_release(drv_cfg->sck_clk_dev, NULL,
+									  &drv_data->sck_cli);
+			}
+			return ret;
+		}
+	}
+
+	return 0;
 }
 
 static int trigger_start(const struct device *dev)
@@ -873,7 +909,6 @@ static int trigger_start(const struct device *dev)
 	 * first. If not, start the transfer directly.
 	 */
 	if (drv_data->request_clock) {
-		sys_notify_init_callback(&drv_data->clk_cli.notify, clock_started_callback);
 		ret = audio_clock_request(drv_data);
 		if (ret < 0) {
 			tdm_uninit(drv_data);
@@ -1156,44 +1191,6 @@ static void data_handler(const struct device *dev, const tdm_buffers_t *released
 	}
 }
 
-static void clock_manager_init(const struct device *dev)
-{
-#if DT_NODE_HAS_STATUS_OKAY(NODE_ACLK) && CONFIG_CLOCK_CONTROL_NRFS_AUDIOPLL
-	struct tdm_drv_data *drv_data = dev->data;
-
-	drv_data->audioclock = DEVICE_DT_GET(NODE_ACLK);
-	drv_data->aclk_spec.frequency = ACLK_FREQUENCY;
-#elif DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)
-	struct tdm_drv_data *drv_data = dev->data;
-
-	drv_data->audioclock = DEVICE_DT_GET(NODE_AUDIO_AUXPLL);
-	drv_data->aclk_spec.frequency = ACLK_FREQUENCY;
-#elif CONFIG_CLOCK_CONTROL_NRF && (NRF_CLOCK_HAS_HFCLKAUDIO || NRF_CLOCK_HAS_HFCLK24M)
-	clock_control_subsys_t subsys;
-	struct tdm_drv_data *drv_data = dev->data;
-
-	subsys = COND_CODE_1(NRF_CLOCK_HAS_HFCLK24M, (CLOCK_CONTROL_NRF_SUBSYS_HF24M),
-		 (CLOCK_CONTROL_NRF_SUBSYS_HFAUDIO));
-	drv_data->clk_mgr = z_nrf_clock_control_get_onoff(subsys);
-	__ASSERT_NO_MSG(drv_data->clk_mgr != NULL);
-#elif NRF_CLOCK_HAS_HFCLKAUDIO
-	struct tdm_drv_data *drv_data = dev->data;
-
-	drv_data->audioclock = DEVICE_DT_GET_ONE(nordic_nrf_clock_hfclkaudio);
-	drv_data->aclk_spec.frequency =
-		DT_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_hfclkaudio),
-			hfclkaudio_frequency);
-#elif NRF_CLOCK_HAS_HFCLK24M
-	struct tdm_drv_data *drv_data = dev->data;
-
-	drv_data->audioclock = DEVICE_DT_GET_ONE(nordic_nrf_clock_xo24m);
-	drv_data->aclk_spec.frequency =
-		DT_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf_clock_xo24m), clock_frequency);
-#else
-	(void)dev;
-#endif /* CONFIG_CLOCK_CONTROL_NRF && (NRF_CLOCK_HAS_HFCLKAUDIO || NRF_CLOCK_HAS_HFCLK24M) */
-}
-
 static int data_init(const struct device *dev)
 {
 	struct tdm_drv_data *drv_data = dev->data;
@@ -1217,10 +1214,39 @@ static DEVICE_API(i2s, tdm_nrf_drv_api) = {
 	.trigger = tdm_nrf_trigger,
 };
 
-#define TDM(idx)             DT_NODELABEL(tdm##idx)
-#define TDM_SCK_CLK_SRC(idx) DT_STRING_TOKEN(TDM(idx), sck_clock_source)
-#define TDM_MCK_CLK_SRC(idx) DT_STRING_TOKEN(TDM(idx), mck_clock_source)
-#define PCLK_NODE(idx)       DT_CLOCKS_CTLR(TDM(idx))
+#define TDM(idx) DT_NODELABEL(tdm##idx)
+
+/* SCK is `clocks` index 0; MCK is index 1, or index 0 when only one state is given. */
+#define TDM_SCK_IDX(idx) 0
+#define TDM_MCK_IDX(idx) COND_CODE_1(DT_CLOCKS_HAS_IDX(TDM(idx), 1), (1), (0))
+
+#if DT_NODE_EXISTS(DT_NODELABEL(aclk))
+#define TDM_ACLK_NODE DT_NODELABEL(aclk)
+#else
+/* No audio-clock signal on this SoC; DT_SAME_NODE below then always resolves to PCLK. */
+#define TDM_ACLK_NODE DT_ROOT
+#endif
+
+/* Map the signal identity of a selected state to the hardware mux position. The signal is
+ * matched by node identity against the SoC's audio-clock (aclk) node, so this stays binding
+ * agnostic - it never names a concrete clock-provider binding.
+ */
+#define TDM_STATE_MUX(idx, cidx)                                                                   \
+	COND_CODE_1(DT_SAME_NODE(NRF_DT_CLK_OUTPUT_BY_IDX(TDM(idx), cidx), TDM_ACLK_NODE),         \
+		    (ACLK), (PCLK))
+
+/* Producer device to request for a selected state, or NULL when the state names none. */
+#define TDM_STATE_DEV(idx, cidx)                                                                   \
+	COND_CODE_1(NRF_DT_CLK_PRESENT_BY_IDX(TDM(idx), cidx),                                     \
+		    (NRF_DT_CLK_DEV_BY_IDX(TDM(idx), cidx)), (NULL))
+
+#define TDM_CLK_CFG_FIELDS(idx)                                                                    \
+	.sck_src = TDM_STATE_MUX(idx, TDM_SCK_IDX(idx)),                                            \
+	.mck_src = TDM_STATE_MUX(idx, TDM_MCK_IDX(idx)),                                            \
+	.sck_base_freq = NRF_PERIPH_GET_FREQUENCY_BY_IDX(TDM(idx), TDM_SCK_IDX(idx)),               \
+	.mck_base_freq = NRF_PERIPH_GET_FREQUENCY_BY_IDX(TDM(idx), TDM_MCK_IDX(idx)),               \
+	.sck_clk_dev = TDM_STATE_DEV(idx, TDM_SCK_IDX(idx)),                                        \
+	.mck_clk_dev = TDM_STATE_DEV(idx, TDM_MCK_IDX(idx)),
 
 #define TDM_NRF_DEVICE(idx)                                                                        \
 	static tdm_ctrl_t tdm##idx##data;                                                          \
@@ -1238,10 +1264,8 @@ static DEVICE_API(i2s, tdm_nrf_drv_api) = {
 	static const struct tdm_drv_cfg tdm_nrf_cfg##idx = {                                       \
 		.data_handler = tdm_##idx##data_handler,                                           \
 		.pcfg = PINCTRL_DT_DEV_CONFIG_GET(TDM(idx)),                                       \
-		.sck_src = TDM_SCK_CLK_SRC(idx),                                                   \
-		.mck_src = TDM_MCK_CLK_SRC(idx),                                                   \
+		TDM_CLK_CFG_FIELDS(idx)                                                            \
 		.mck_frequency = DT_PROP_OR(TDM(idx), mck_frequency, 0),                           \
-		.pclk_frequency = DT_PROP(PCLK_NODE(idx), clock_frequency),                        \
 		.p_reg = NRF_TDM##idx,                                                             \
 		.control_data = &tdm##idx##data,                                                   \
 		.mem_reg = DMM_DEV_TO_REG(TDM(idx)),                                               \
@@ -1260,13 +1284,8 @@ static DEVICE_API(i2s, tdm_nrf_drv_api) = {
 			    sizeof(struct tdm_buf), ARRAY_SIZE(tx_msgs##idx));                     \
 		k_msgq_init(&tdm_nrf_data##idx.rx_queue, (char *)rx_msgs##idx,                     \
 			    sizeof(struct tdm_buf), ARRAY_SIZE(rx_msgs##idx));                     \
-		clock_manager_init(dev);                                                           \
 		return 0;                                                                          \
 	}                                                                                          \
-	BUILD_ASSERT((TDM_SCK_CLK_SRC(idx) != ACLK && TDM_MCK_CLK_SRC(idx) != ACLK) || \
-			     (DT_NODE_HAS_STATUS_OKAY(NODE_ACLK) || \
-			      DT_NODE_HAS_STATUS_OKAY(NODE_AUDIO_AUXPLL)), \
-		     "Clock source ACLK requires the audiopll/audio_auxpll node."); \
 	NRF_DT_CHECK_NODE_HAS_REQUIRED_MEMORY_REGIONS(TDM(idx));                                   \
 	DEVICE_DT_DEFINE(TDM(idx), tdm_nrf_init##idx, NULL, &tdm_nrf_data##idx, &tdm_nrf_cfg##idx, \
 			 POST_KERNEL, CONFIG_I2S_INIT_PRIORITY, &tdm_nrf_drv_api);

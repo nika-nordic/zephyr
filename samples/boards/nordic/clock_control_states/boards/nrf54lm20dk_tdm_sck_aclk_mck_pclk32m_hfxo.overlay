@@ -1,0 +1,35 @@
+/*
+ * TDM case 3: SCK on the 24 MHz audio clock (ACLK via XO24M), MCK on the 32 MHz peripheral clock
+ * backed by the HFXO (pclk32m_hfxo).
+ *
+ * This is the case that requests two distinct producers concurrently: xo24m for SCK (ACLK mux)
+ * and xo for MCK (PCLK32M mux, HFXO requested for accuracy). The driver keeps one client per
+ * signal and only starts the transfer once both producers report ready. This combination is not
+ * expressible with the legacy PCLK/ACLK clock-source enum.
+ */
+/ {
+	aliases {
+		clk-consumer = &tdm;
+	};
+};
+
+&pinctrl {
+	tdm_default_alt: tdm_default_alt {
+		group1 {
+			psels = <NRF_PSEL(TDM_SCK_M, 1, 8)>,
+				<NRF_PSEL(TDM_FSYNC_M, 1, 9)>,
+				<NRF_PSEL(TDM_SDOUT, 1, 10)>,
+				<NRF_PSEL(TDM_SDIN, 1, 11)>,
+				<NRF_PSEL(TDM_MCK, 1, 12)>;
+		};
+	};
+};
+
+&tdm {
+	status = "okay";
+	pinctrl-0 = <&tdm_default_alt>;
+	pinctrl-names = "default";
+	mck-frequency = <12288000>;
+	clocks = <&aclk_xo24m>, <&pclk32m_hfxo>;
+	clock-names = "sck", "mck";
+};

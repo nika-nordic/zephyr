@@ -1,0 +1,5 @@
+/* TDM case 2: SCK on ACLK (xo24m), MCK on PCLK32M from the internal oscillator (no MCK producer). */
+&tdm {
+	clocks = <&aclk_xo24m>, <&pclk32m_hfint>;
+	clock-names = "sck", "mck";
+};

@@ -191,7 +191,9 @@
 };
 
 &audio_auxpll {
-	nordic,frequency = <NRF_AUXPLL_FREQ_DIV_AUDIO_48K>;
+	/* Audio rate (12.288 MHz, 48 kHz family) comes from the SoC node's clock-frequency,
+	 * which replaced the deprecated nordic,frequency token.
+	 */
 	status = "okay";
 };
 

@@ -1,0 +1,5 @@
+/* TDM case 3: SCK on ACLK (xo24m), MCK on PCLK32M backed by the HFXO (xo) - two producers. */
+&tdm {
+	clocks = <&aclk_xo24m>, <&pclk32m_hfxo>;
+	clock-names = "sck", "mck";
+};

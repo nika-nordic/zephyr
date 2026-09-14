@@ -17,13 +17,23 @@ LOG_MODULE_REGISTER(clock_control_nrf_hsfll_global, CONFIG_CLOCK_CONTROL_LOG_LEV
 
 #define SHIM_DEFAULT_PRESCALER AUDIOPLL_DIV_12
 
+/* Audio PLL output rate in Hz. clock-frequency is the preferred property; the deprecated frequency,
+ * when explicitly set, takes precedence (matching the auxpll shim), otherwise clock-frequency is
+ * used.
+ */
+#define SHIM_AUDIOPLL_FREQ								\
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(0, frequency),				\
+		    (DT_INST_PROP(0, frequency)), (DT_INST_PROP(0, clock_frequency)))
+
 BUILD_ASSERT(
 	DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 	"multiple instances not supported"
 );
 
-BUILD_ASSERT(DT_INST_PROP(0, frequency) >= NRFS_AUDIOPLL_FREQ_MIN);
-BUILD_ASSERT(DT_INST_PROP(0, frequency) <= NRFS_AUDIOPLL_FREQ_MAX);
+BUILD_ASSERT(DT_INST_NODE_HAS_PROP(0, clock_frequency) || DT_INST_NODE_HAS_PROP(0, frequency),
+	     "audiopll needs clock-frequency (or the deprecated frequency)");
+BUILD_ASSERT(SHIM_AUDIOPLL_FREQ >= NRFS_AUDIOPLL_FREQ_MIN);
+BUILD_ASSERT(SHIM_AUDIOPLL_FREQ <= NRFS_AUDIOPLL_FREQ_MAX);
 
 struct shim_data {
 	struct onoff_manager mgr;
@@ -263,11 +273,11 @@ static int shim_init(const struct device *dev)
 		return ret;
 	}
 
-	freq_fraction = shim_frequency_to_freq_fraction(DT_INST_PROP(0, frequency));
+	freq_fraction = shim_frequency_to_freq_fraction(SHIM_AUDIOPLL_FREQ);
 
 	LOG_DBG("requesting freq_fraction %u for frequency %uHz",
 		freq_fraction,
-		DT_INST_PROP(0, frequency));
+		SHIM_AUDIOPLL_FREQ);
 
 	ret = shim_nrfs_request_freq_sync(dev, freq_fraction);
 	if (ret) {

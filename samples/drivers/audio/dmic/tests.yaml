@@ -41,3 +41,62 @@ tests:
         - "Exiting"
     extra_configs:
       - CONFIG_CLOCK_CONTROL_NRF=n
+
+  # Clock-state prototype: the pdm node selects a nordic,clock-state with its `clocks` property.
+  # The split clock control drivers are the default on both nRF5340 and nRF54LM20, so no extra
+  # Kconfig is needed. Build-only coverage of each source variant.
+
+  # nRF5340: pdm0 on the 32 MHz peripheral clock from the internal oscillator.
+  sample.drivers.audio.dmic.clock_state.nrf5340.pclk32m_hfint:
+    tags: dmic
+    build_only: true
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    integration_platforms:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_pdm0_pclk32m_hfint.overlay"
+
+  # nRF5340: pdm0 on the 32 MHz peripheral clock backed by the HFXO (&hfclk).
+  sample.drivers.audio.dmic.clock_state.nrf5340.pclk32m_hfxo:
+    tags: dmic
+    build_only: true
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    integration_platforms:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_pdm0_pclk32m_hfxo.overlay"
+
+  # nRF5340: pdm0 on the audio clock (ACLK) from the HFXO-backed audio PLL (&hfclkaudio).
+  sample.drivers.audio.dmic.clock_state.nrf5340.aclk_hfclkaudio:
+    tags: dmic
+    build_only: true
+    platform_allow:
+      - nrf5340dk/nrf5340/cpuapp
+    integration_platforms:
+      - nrf5340dk/nrf5340/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf5340dk_pdm0_aclk_hfclkaudio.overlay"
+
+  # nRF54LM20: pdm20 on the 32 MHz peripheral clock from the internal oscillator.
+  sample.drivers.audio.dmic.clock_state.nrf54lm20.pclk32m_hfint:
+    tags: dmic
+    build_only: true
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    integration_platforms:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_pdm20_pclk32m_hfint.overlay"
+
+  # nRF54LM20: pdm20 on the 32 MHz peripheral clock backed by the HFXO (&xo).
+  sample.drivers.audio.dmic.clock_state.nrf54lm20.pclk32m_hfxo:
+    tags: dmic
+    build_only: true
+    platform_allow:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    integration_platforms:
+      - nrf54lm20dk/nrf54lm20a/cpuapp
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE="boards/nrf54lm20dk_pdm20_pclk32m_hfxo.overlay"

@@ -9,10 +9,19 @@ include: base.yaml
 
 properties:
 
-  hfclkaudio-frequency:
+  clock-frequency:
     type: int
     description: |
-      Frequency of the HFCLKAUDIO clock in Hz. Adjustable with 3.3 ppm
-      resolution in two frequency bands - 11.176 MHz to 11.402 MHz, and
-      12.165 MHz to 12.411 MHz (refer to the relevant Product Specification).
-      The HFCLKAUDIO clock is only available in the nRF53 Series SoCs.
+      Target frequency of the HFCLKAUDIO clock in Hz. The driver rounds it to the
+      nearest achievable setting (3.3 ppm resolution) in one of two frequency bands
+      - 11.176 MHz to 11.402 MHz, and 12.165 MHz to 12.411 MHz (refer to the relevant
+      Product Specification). Preferred over the deprecated hfclkaudio-frequency; it
+      gives clock consumers a uniform, target-oriented interface across Nordic audio
+      clock producers. The HFCLKAUDIO clock is only available in the nRF53 Series SoCs.
+
+  hfclkaudio-frequency:
+    type: int
+    deprecated: true
+    description: |
+      Deprecated in favor of clock-frequency (identical meaning and units). Frequency
+      of the HFCLKAUDIO clock in Hz. When both are present, clock-frequency wins.

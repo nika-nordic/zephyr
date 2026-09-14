@@ -1,0 +1,4 @@
+/* TDM case 1: SCK and MCK both on ACLK (24 MHz) from the HFXO via XO24M (single state). */
+&tdm {
+	clocks = <&aclk_xo24m>;
+};

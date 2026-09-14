@@ -1,0 +1,4 @@
+/* TDM case 4: SCK and MCK both on PCLK32M from the internal oscillator (single state, no producer). */
+&tdm {
+	clocks = <&pclk32m_hfint>;
+};

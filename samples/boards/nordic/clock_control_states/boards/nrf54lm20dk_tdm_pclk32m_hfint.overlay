@@ -1,0 +1,31 @@
+/*
+ * TDM case 4: SCK and MCK both on the 32 MHz peripheral clock from the internal oscillator.
+ *
+ * A single state (pclk32m_hfint) applies to both signals. It maps to the PCLK32M mux and names no
+ * producer, so no runtime clock request is made; the transfer starts immediately.
+ */
+/ {
+	aliases {
+		clk-consumer = &tdm;
+	};
+};
+
+&pinctrl {
+	tdm_default_alt: tdm_default_alt {
+		group1 {
+			psels = <NRF_PSEL(TDM_SCK_M, 1, 8)>,
+				<NRF_PSEL(TDM_FSYNC_M, 1, 9)>,
+				<NRF_PSEL(TDM_SDOUT, 1, 10)>,
+				<NRF_PSEL(TDM_SDIN, 1, 11)>,
+				<NRF_PSEL(TDM_MCK, 1, 12)>;
+		};
+	};
+};
+
+&tdm {
+	status = "okay";
+	pinctrl-0 = <&tdm_default_alt>;
+	pinctrl-names = "default";
+	mck-frequency = <12288000>;
+	clocks = <&pclk32m_hfint>;
+};
